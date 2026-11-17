@@ -1,0 +1,12 @@
+{
+  "lpfr": {
+    "baseUrl": "http://devesdc.sandbox.suf.purs.gov.rs:8888/<TOKEN_SA_PORTALA>/api",
+    "pin": "<PIN>"
+  },
+  "vpfr": {
+    "baseUrl": "https://vsdc.sandbox.suf.purs.gov.rs",
+    "pfxPath": "config/<SERTIFIKAT>.pfx",
+    "pfxPassword": "<LOZINKA>",
+    "pac": "<PAC>"
+  }
+}

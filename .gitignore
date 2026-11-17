@@ -1,0 +1,18 @@
+# Gradle i Kotlin
+.gradle/
+build/
+.kotlin/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# macOS
+.DS_Store
+
+# Lokalne tajne: token, PIN, lozinke, sertifikati. Nikad u Git.
+config/local.*
+*.pfx
+*.p12
+local.properties
