@@ -42,14 +42,15 @@ internal suspend fun komandaRacun(argumenti: List<String>) {
         else -> prekini("Nepoznata vrsta „$v“. Dozvoljeno: obuka, promet, predracun")
     }
     val podrazumevanaOznaka = vrednostOpcije(argumenti, "--oznaka") ?: "A"
-    val opisiStavki = vrednostiOpcije(argumenti, "--stavka").ifEmpty { listOf("Test kafa;1;300") }
+    val opisiArtikala = vrednostiOpcije(argumenti, "--artikal")
+    val opisiStavki = vrednostiOpcije(argumenti, "--stavka").ifEmpty { if (opisiArtikala.isEmpty()) listOf("Test kafa;1;300") else emptyList() }
     val delovi = vrednostiOpcije(argumenti, "--placanje").ifEmpty { listOf("gotovina") }.map(::deoNaplate)
     val primljeno = vrednostOpcije(argumenti, "--primljeno")?.let { broj(it, "--primljeno") }
     val kupac = vrednostOpcije(argumenti, "--kupac")
 
     saPfrom(argumenti) { veza, status ->
         val stope = status.currentTaxRates?.taxCategories.orEmpty().flatMap { it.taxRates }
-        val stavke = opisiStavki.map { stavkaIzOpisa(it, podrazumevanaOznaka, stope) }
+        val stavke = opisiArtikala.map { stavkaIzKataloga(it, stope) } + opisiStavki.map { stavkaIzOpisa(it, podrazumevanaOznaka, stope) }
         val ukupno = Obracun.ukupno(stavke)
         val naplata = try {
             Obracun.naplata(ukupno, delovi, primljeno)

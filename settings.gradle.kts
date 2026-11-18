@@ -15,4 +15,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "hospes"
 
-include(":esir", ":esir-cli")
+include(":esir", ":esir-cli", ":app")

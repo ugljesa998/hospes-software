@@ -38,6 +38,7 @@ fun main(args: Array<String>) {
         "korporativna" -> runBlocking { komandaKorporativna(args.toList()) }
         "korporativna-refundacija" -> runBlocking { komandaKorporativnaRefundacija(args.toList()) }
         "bez-naknade" -> runBlocking { komandaBezNaknade(args.toList()) }
+        "katalog" -> komandaKatalog(args.toList())
         "zurnal" -> komandaZurnal(args.toList())
         "lista" -> komandaZurnal(listOf("zurnal", "--sve"))
         "provera" -> runBlocking { komandaProvera(args.toList()) }
@@ -59,7 +60,11 @@ private fun ispisiPomoc() {
         Komande:
           status                              stanje PFR-a: dostupnost, PIN, šifre stanja, poreske stope
           pin                                 PIN iz config/local.json (jednom, bez ponavljanja)
-          racun [--vrsta obuka|promet|predracun] [--stavka 'Naziv;količina;cena[;oznaka[;popust%]]']...
+          katalog [--trazi tekst]             katalog artikala (podaci/katalog.json)
+          katalog dodaj --sifra 101 --naziv 'Espresso' --cena 180 --oznaka A [--jm kom] [--gtin …] [--kategorija …]
+          katalog cena <šifra> <cena> | katalog ukloni <šifra> | katalog uvoz <fajl.csv> | katalog izvoz <fajl.csv>
+          racun [--vrsta obuka|promet|predracun] [--artikal 'šifra|GTIN[;količina[;cena[;popust%]]]']...
+                [--stavka 'Naziv;količina;cena[;oznaka[;popust%]]']...
                 [--placanje gotovina | --placanje kartica:500 ...] [--primljeno 1000] [--oznaka A] [--kupac 10:123]
                                               račun sa obračunom (bez --stavka: „Test kafa“ 1 × 300, Obuka, gotovina)
           refundacija <broj> --kupac 20:123   refundacija celog računa (Promet, Obuka, Predračun), uz ID kupca

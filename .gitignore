@@ -14,6 +14,9 @@ build/
 # Računi izdati iz komandne linije (tekst, QR, odgovor PFR-a)
 racuni/
 
+# Lokalni podaci (katalog artikala itd.)
+podaci/
+
 # Lokalne tajne: token, PIN, lozinke, sertifikati. Nikad u Git.
 config/local.*
 *.pfx

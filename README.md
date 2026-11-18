@@ -8,6 +8,7 @@ Hospes POS je sopstveni POS i fiskalni sistem kompanije OmniIT za tržište Srbi
 |---|---|---|
 | `esir/` | ESIR modul: komunikacija sa L-PFR i V-PFR (TaxCore v3) | Kotlin Multiplatform |
 | `esir-cli/` | Komandna linija za ručno testiranje ESIR modula | Kotlin (JVM) |
+| `app/` | Aplikacija: ESIR test ekran (desktop sada, Android i Windows kasnije) | Compose Multiplatform |
 | `config/` | Primer podešavanja (`example.json`). Pravo podešavanje ide u `config/local.json`, koje nije u Git-u | — |
 
 Sledeći delovi (LPFR, aplikacija, hub, server, admin) dodaju se kada dođemo do njih.
@@ -18,6 +19,19 @@ Sledeći delovi (LPFR, aplikacija, hub, server, admin) dodaju se kada dođemo do
 - Internet, za razvojni LPFR Poreske
 
 Gradle ne treba instalirati: `./gradlew` sam preuzima odgovarajuću verziju.
+
+## Aplikacija
+
+```bash
+./gradlew :app:run              # otvara ESIR test ekran (prozor) na desktopu
+```
+
+Ekran: izbor L-PFR/V-PFR, stanje i PIN, stavke iz kataloga (klik, pretraga, bar-kod čitač + Enter) ili ručni unos
+(količina, cena, popust, poreska oznaka iz PFR-a), plaćanje i kusur, izdavanje računa, prikaz računa sa QR kodom,
+elektronski žurnal za 30 dana i katalog artikala (novi artikal, izmena i cena, pretraga, uvoz i izvoz CSV).
+Koristi isti `config/local.json`, isti žurnal (`racuni/`) i isti katalog (`podaci/katalog.json`) kao komandna linija.
+
+Ako je aplikacija upaljena, zatvori je pre `./gradlew build`, pa je posle ponovo pokreni.
 
 ## Komande
 
@@ -49,6 +63,22 @@ Avansni tok (PURS uputstvo, poglavlje 9.1):
 ./gradlew -q :esir-cli:run --args="konacni-racun <broj AR> --iznos 2500 --naziv 'Najam vozila' --placanje kartica"
 ./gradlew -q :esir-cli:run --args="provera <RequestId>"   # da li je poslednji račun sa tim RequestId izdat
 ```
+
+Katalog artikala (ESIR upitnik, deo 11) se čuva u `podaci/katalog.json` (nije u Git-u):
+
+```bash
+./gradlew -q :esir-cli:run --args="katalog uvoz config/katalog-primer.csv"     # primer kafića (oznaka A = sandbox)
+./gradlew -q :esir-cli:run --args="katalog"                                    # spisak; --trazi kafa (naziv, šifra, GTIN, kategorija)
+./gradlew -q :esir-cli:run --args="katalog dodaj --sifra 105 --naziv 'Topla čokolada' --cena 280 --oznaka A --kategorija 'Topli napici'"
+./gradlew -q :esir-cli:run --args="katalog cena 101 190"                       # promena cene
+./gradlew -q :esir-cli:run --args="katalog izvoz izvoz/katalog.csv"            # CSV za Excel (UTF-8 sa BOM-om)
+./gradlew -q :esir-cli:run --args="racun --artikal '101;2' --artikal 5449000000996 --artikal '501;0.35' --primljeno 2000"
+#   artikal po šifri ili bar-kodu (GTIN): šifra[;količina[;cena[;popust%]]]
+```
+
+CSV: kolone `sifra;naziv;jedinica_mere;cena;oznaka;gtin;kategorija`, decimalni zarez (`1199,99`).
+Obavezne su `sifra`, `naziv`, `cena` i `oznaka`. Excel fajl sačuvan kao „CSV UTF-8“ ili običan „CSV“ (Windows-1250) se čita ispravno.
+Poreska oznaka mora postojati u stanju PFR-a; u sandbox-u su oznake izmišljene (A = 10%), u produkciji npr. Ђ = 20%.
 
 Izdati računi se čuvaju u folderu `racuni/` (tekst računa, QR kod kao GIF, ceo odgovor PFR-a). Folder nije u Git-u.
 

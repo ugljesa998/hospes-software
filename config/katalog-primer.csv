@@ -1,0 +1,12 @@
+sifra;naziv;jedinica_mere;cena;oznaka;gtin;kategorija
+101;Espresso;kom;180,00;A;;Kafa
+102;Kafa sa mlekom;kom;220,00;A;;Kafa
+103;Kapućino;kom;250,00;A;;Kafa
+104;Čaj;kom;180,00;A;;Topli napici
+201;Coca-Cola 0,25;kom;250,00;A;5449000000996;Sokovi
+202;Kisela voda 0,33;kom;180,00;A;;Sokovi
+203;Ceđena pomorandža 0,2;kom;350,00;A;;Sokovi
+301;Pivo točeno 0,5;kom;320,00;A;;Pivo
+401;Sendvič šunka-sir;kom;450,00;A;;Hrana
+402;Tost;kom;380,00;A;;Hrana
+501;Sir gauda;kg;1199,99;A;;Delikates
