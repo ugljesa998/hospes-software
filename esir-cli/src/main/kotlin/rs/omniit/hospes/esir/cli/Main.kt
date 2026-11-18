@@ -33,7 +33,8 @@ fun main(args: Array<String>) {
         "avans" -> runBlocking { komandaAvans(args.toList()) }
         "zatvori-avans" -> runBlocking { komandaZatvoriAvans(args.toList()) }
         "konacni-racun" -> runBlocking { komandaKonacniRacun(args.toList()) }
-        "lista" -> komandaLista()
+        "zurnal" -> komandaZurnal(args.toList())
+        "lista" -> komandaZurnal(listOf("zurnal", "--sve"))
         "provera" -> runBlocking { komandaProvera(args.toList()) }
         else -> {
             println("Nepoznata komanda: $komanda")
@@ -67,7 +68,11 @@ private fun ispisiPomoc() {
           konacni-racun <broj AR> --iznos 2500 [--naziv "..."] [--placanje kartica]
                                               Promet Prodaja posle avansa; PFR-u ide samo ostatak
           (načini plaćanja: gotovina, kartica, cek, prenos, vaucer, instant, drugo)
-          lista                              računi sačuvani u folderu racuni/
+          zurnal [--od gggg-mm-dd] [--do gggg-mm-dd] [--sve] [--vrsta promet] [--tip refundacija]
+                 [--kupac 20:123] [--placanje kartica] [--trazi tekst]
+                                              elektronski žurnal (podrazumevano poslednjih 30 dana)
+          zurnal --prikazi <broj>             ceo račun iz žurnala
+          lista                               ceo žurnal (isto što i zurnal --sve)
           provera <RequestId>                 da li je poslednji račun sa tim RequestId izdat
         """.trimIndent()
     )

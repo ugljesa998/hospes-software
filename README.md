@@ -35,7 +35,9 @@ Gradle ne treba instalirati: `./gradlew` sam preuzima odgovarajuću verziju.
 ./gradlew -q :esir-cli:run --args="iz-predracuna <PFR broj> --placanje kartica"    # Promet Prodaja iz predračuna
 ./gradlew -q :esir-cli:run --args="kopija <PFR broj računa>"                      # kopija računa vrste Promet
 ./gradlew -q :esir-cli:run --args="refundacija <PFR broj računa> --kupac 20:123456789"   # refundacija uz ID kupca
-./gradlew -q :esir-cli:run --args="lista"    # računi sačuvani u racuni/
+./gradlew -q :esir-cli:run --args="zurnal"   # elektronski žurnal, poslednjih 30 dana, sa zbirom po vrsti
+./gradlew -q :esir-cli:run --args="zurnal --tip refundacija --trazi kafa"   # filteri: --od --do --vrsta --tip --kupac --placanje --trazi --sve
+./gradlew -q :esir-cli:run --args="zurnal --prikazi <PFR broj>"             # ceo račun iz žurnala
 ```
 
 Avansni tok (PURS uputstvo, poglavlje 9.1):

@@ -4,6 +4,7 @@ import rs.omniit.hospes.esir.Decimal4
 import rs.omniit.hospes.esir.EsirGreska
 import rs.omniit.hospes.esir.EsirHttp
 import rs.omniit.hospes.esir.FiskalizovanRacun
+import rs.omniit.hospes.esir.FolderZurnal
 import rs.omniit.hospes.esir.IzdatRacun
 import rs.omniit.hospes.esir.NacinPlacanja
 import rs.omniit.hospes.esir.Obracun
@@ -20,10 +21,9 @@ import rs.omniit.hospes.esir.ZahtevZaRacun
 import rs.omniit.hospes.esir.naziv
 import rs.omniit.hospes.esir.noviRequestId
 import java.io.File
-import java.util.Base64
 
-/** Folder u koji se čuvaju izdati računi (zahtev + odgovor, tekst, QR kod). Nije u Git-u. */
-internal val folderRacuna = File("racuni")
+/** Elektronski žurnal komandne linije: folder `racuni/` (zahtev + odgovor, tekst, QR kod). Nije u Git-u. */
+internal val zurnal = FolderZurnal(File("racuni"))
 
 /**
  * `racun [--vrsta obuka|promet|predracun] [--stavka "Naziv;količina;cena[;oznaka[;popust%]]"]...
@@ -137,7 +137,7 @@ internal suspend fun komandaIzPredracuna(argumenti: List<String>) {
 internal fun nacinPlacanja(argumenti: List<String>): NacinPlacanja? =
     vrednostOpcije(argumenti, "--placanje")?.let(::nacinIzNaziva)
 
-private fun nacinIzNaziva(p: String): NacinPlacanja =
+internal fun nacinIzNaziva(p: String): NacinPlacanja =
     when (p) {
         "gotovina" -> NacinPlacanja.GOTOVINA
         "kartica" -> NacinPlacanja.PLATNA_KARTICA
@@ -179,27 +179,6 @@ internal suspend fun komandaKopija(argumenti: List<String>) {
 
     saPfrom(argumenti) { veza, status ->
         izdajIPrikazi(veza, status, zahtev, "Kopija ${zahtev.transactionType.naziv} za $broj")
-    }
-}
-
-/** `lista`: računi sačuvani u folderu `racuni/`, od najnovijeg. */
-internal fun komandaLista() {
-    val zapisi = folderRacuna.listFiles { f -> f.name.endsWith(".json") }.orEmpty()
-        .mapNotNull { f -> runCatching { EsirHttp.json.decodeFromString(IzdatRacun.serializer(), f.readText()) }.getOrNull() }
-        .sortedByDescending { it.racun.totalCounter ?: 0 }
-    if (zapisi.isEmpty()) {
-        println("Nema sačuvanih računa u ${folderRacuna.path}/.")
-        return
-    }
-    println("PFR broj računa".padEnd(26) + "Brojač".padEnd(10) + "Vrsta".padEnd(24) + "Ukupno".padEnd(10) + "Poziva se na")
-    zapisi.forEach { z ->
-        println(
-            z.racun.invoiceNumber.padEnd(26) +
-                (z.racun.invoiceCounter ?: "-").padEnd(10) +
-                z.oznaka.padEnd(24) +
-                (z.racun.totalAmount?.toString() ?: "-").padEnd(10) +
-                (z.zahtev.referentDocumentNumber ?: ""),
-        )
     }
 }
 
@@ -276,10 +255,12 @@ internal suspend fun izdajIPrikazi(
             val izdat = IzdatRacun(requestId, zahtev, rezultat.racun)
             ispisiRacun(izdat.racun)
             if (dodatak.isNotEmpty()) {
-                println(NASLOV_DODATKA)
+                println(FolderZurnal.NASLOV_DODATKA)
                 dodatak.forEach(::println)
             }
-            sacuvaj(izdat, dodatak)
+            zurnal.sacuvaj(izdat, dodatak)
+            println()
+            println("Sačuvano u elektronski žurnal (${zurnal.folder.path}/): zahtev i odgovor, tekst računa, QR kod")
             return izdat
         }
         is RezultatRacuna.Odbijen -> {
@@ -321,39 +302,18 @@ private fun ispisiRacun(racun: FiskalizovanRacun) {
     println(racun.journal ?: "(PFR nije vratio tekst računa)")
 }
 
-private const val NASLOV_DODATKA = "---- ESIR dodaje na odštampan račun (ne šalje se PFR-u) ----"
-
-private fun imeFajla(brojRacuna: String) = brojRacuna.replace(Regex("[^A-Za-z0-9-]"), "_")
-
-private fun sacuvaj(izdat: IzdatRacun, dodatak: List<String>) {
-    folderRacuna.mkdirs()
-    val ime = imeFajla(izdat.racun.invoiceNumber)
-    File(folderRacuna, "$ime.json").writeText(EsirHttp.json.encodeToString(IzdatRacun.serializer(), izdat))
-    izdat.racun.journal?.let { tekst ->
-        val ceo = if (dodatak.isEmpty()) tekst else tekst + "\n" + NASLOV_DODATKA + "\n" + dodatak.joinToString("\n") + "\n"
-        File(folderRacuna, "$ime.txt").writeText(ceo)
-    }
-    izdat.racun.verificationQRCode?.let { File(folderRacuna, "$ime.gif").writeBytes(Base64.getDecoder().decode(it)) }
-    println()
-    println("Sačuvano u ${folderRacuna.path}/: $ime.json (zahtev i odgovor), $ime.txt (tekst), $ime.gif (QR kod)")
-}
-
 /** Sačuvan račun po PFR broju, ili `null` ako ga nema ili je sačuvan starijom verzijom. */
-internal fun nadjiSacuvan(brojRacuna: String): IzdatRacun? {
-    val fajl = File(folderRacuna, "${imeFajla(brojRacuna)}.json")
-    if (!fajl.exists()) return null
-    return runCatching { EsirHttp.json.decodeFromString(IzdatRacun.serializer(), fajl.readText()) }.getOrNull()
-}
+internal fun nadjiSacuvan(brojRacuna: String): IzdatRacun? = zurnal.nadji(brojRacuna)
 
 internal fun ucitajIzdat(brojRacuna: String): IzdatRacun {
-    val fajl = File(folderRacuna, "${imeFajla(brojRacuna)}.json")
-    if (!fajl.exists()) prekini("Nema sačuvanog računa $brojRacuna u ${folderRacuna.path}/. Spisak: komanda lista")
-    return runCatching { EsirHttp.json.decodeFromString(IzdatRacun.serializer(), fajl.readText()) }.getOrElse {
+    zurnal.nadji(brojRacuna)?.let { return it }
+    if (zurnal.fajl(brojRacuna, "json").exists()) {
         prekini(
             "Račun $brojRacuna je sačuvan starijom verzijom, bez zahteva, pa za njega ne može refundacija ni kopija. " +
                 "Izdaj novi račun.",
         )
     }
+    prekini("Nema računa $brojRacuna u elektronskom žurnalu. Spisak: komanda zurnal")
 }
 
 internal fun vrednostOpcije(argumenti: List<String>, ime: String): String? {
