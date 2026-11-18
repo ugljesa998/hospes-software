@@ -28,10 +28,18 @@ kotlin {
         }
         getByName("desktopTest").dependencies {
             implementation(kotlin("test"))
+            // Samo za generator slika ekrana za uputstva (SlikeZaUputstvoTest): klik po tekstu i snimak ekrana.
+            implementation(libs.compose.ui.test)
             implementation(libs.ktor.client.mock)
             implementation(libs.kotlinx.coroutines.test)
         }
     }
+}
+
+// Slike ekrana za uputstva prave se samo na zahtev:
+// ./gradlew :app:desktopTest --tests "*SlikeZaUputstvo*" -Phospes.slike=../docs/slike
+tasks.withType<Test>().configureEach {
+    systemProperty("hospes.slike", providers.gradleProperty("hospes.slike").getOrElse(""))
 }
 
 compose.desktop {

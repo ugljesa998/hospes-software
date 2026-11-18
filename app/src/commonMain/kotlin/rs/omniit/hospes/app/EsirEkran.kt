@@ -444,7 +444,7 @@ private fun UnosStavke(m: EsirModel) {
 
 private enum class Desno(val naslov: String) {
     RACUN("Račun"),
-    ZURNAL("Žurnal (30 dana)"),
+    ZURNAL("Žurnal"),
     KATALOG("Katalog"),
     PODESAVANJA("Podešavanja"),
 }
@@ -1332,8 +1332,26 @@ private fun ColumnScope.KatalogArtikala(m: EsirModel) {
 
 @Composable
 private fun ZurnalLista(m: EsirModel, posleIzbora: () -> Unit) {
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        OutlinedTextField(
+            m.pretragaZurnala,
+            { m.pretragaZurnala = it },
+            label = { Text("Pretraga") },
+            placeholder = { Text("broj računa, artikal, kupac, kasir", fontSize = 13.sp) },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+            keyboardActions = KeyboardActions(onSearch = { m.ucitajZurnal() }),
+            modifier = Modifier.weight(1f),
+        )
+        OutlinedTextField(m.zurnalOd, { m.zurnalOd = it }, label = { Text("Od") }, singleLine = true, modifier = Modifier.width(128.dp))
+        OutlinedTextField(m.zurnalDo, { m.zurnalDo = it }, label = { Text("Do") }, singleLine = true, modifier = Modifier.width(128.dp))
+        Button(onClick = m::ucitajZurnal) { Text("Traži") }
+    }
+    m.greskaPretrage?.let { Text(it, color = CRVENA, fontSize = 13.sp) }
+    Text("Pronađeno računa: ${m.zurnal.size}" + (if (m.zurnalOd.isNotBlank()) " (od ${m.zurnalOd})" else ""), color = Color.Gray, fontSize = 12.sp)
+    Spacer(Modifier.height(4.dp))
     if (m.zurnal.isEmpty()) {
-        Text("U žurnalu nema računa za poslednjih 30 dana.", color = Color.Gray)
+        Text("Nema računa za ovu pretragu.", color = Color.Gray)
         return
     }
     LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp)) {

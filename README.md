@@ -97,6 +97,31 @@ Lokalna provera paketa na Mac-u (Java iz Homebrew-a; pravi paket se pravi na Git
 ./gradlew :app:createDistributable -Pcompose.desktop.packaging.checkJdkVendor=false
 ```
 
+## Dokumentacija za prijavu ESIR-a
+
+Izvori su u `docs/` (Markdown, latinica), a PDF-ovi za portal u `docs/pdf/`:
+
+| Dokument | Izvor |
+|---|---|
+| Opis proizvoda | [docs/opis-proizvoda.md](docs/opis-proizvoda.md) |
+| Korisničko uputstvo | [docs/korisnicko-uputstvo.md](docs/korisnicko-uputstvo.md) |
+| Uputstvo za instalaciju | [docs/uputstvo-instalacija.md](docs/uputstvo-instalacija.md) |
+| Uputstvo za konfiguraciju | [docs/uputstvo-konfiguracija.md](docs/uputstvo-konfiguracija.md) |
+
+Primeri računa za upitnik su u [docs/primeri-racuna](docs/primeri-racuna/README.md). Posle izmene teksta PDF-ovi se
+prave ponovo (potreban je Google Chrome):
+
+```bash
+python3 -I docs/napravi-pdf.py
+```
+
+Slike ekrana (`docs/slike/`) prave se iz aplikacije, sa izmišljenim podešavanjima i lažnim PFR-om; računi na slikama
+su iz foldera `racuni/`:
+
+```bash
+./gradlew :app:desktopTest --tests "*SlikeZaUputstvo*" -Phospes.slike=../docs/slike
+```
+
 ## Komande
 
 ```bash

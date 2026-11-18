@@ -1066,8 +1066,29 @@ class EsirModel(private val okruzenje: Okruzenje, private val scope: CoroutineSc
     }
 
     /** Učitava žurnal za poslednjih 30 dana; ako nijedan račun nije prikazan, prikazuje poslednji izdati. */
+    /**
+     * Pretraga elektronskog žurnala (upitnik: operativne funkcije, pitanje 16): tekst (broj računa, artikal, kupac,
+     * kasir) i period `gggg-mm-dd`. Bez perioda: poslednjih 30 dana. Svi računi ostaju u žurnalu.
+     */
+    var pretragaZurnala by mutableStateOf("")
+    var zurnalOd by mutableStateOf(okruzenje.pre30Dana())
+    var zurnalDo by mutableStateOf("")
+    var greskaPretrage by mutableStateOf<String?>(null)
+        private set
+
     fun ucitajZurnal() {
-        zurnal = okruzenje.zurnal.pretrazi(FilterZurnala(od = okruzenje.pre30Dana()))
+        val filter = try {
+            FilterZurnala(
+                od = zurnalOd.trim().ifEmpty { null },
+                doDana = zurnalDo.trim().ifEmpty { null },
+                tekst = pretragaZurnala.trim().ifEmpty { null },
+            )
+        } catch (e: IllegalArgumentException) {
+            greskaPretrage = e.message
+            return
+        }
+        greskaPretrage = null
+        zurnal = okruzenje.zurnal.pretrazi(filter)
         if (prikazan == null) zurnal.firstOrNull()?.let(::prikazi)
     }
 

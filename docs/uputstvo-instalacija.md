@@ -1,6 +1,6 @@
-# Hospes POS: uputstvo za instalaciju (Windows)
+# Hospes POS – uputstvo za instalaciju (Windows)
 
-Proizvođač: OmniIT · Proizvod: Hospes POS · Verzija: 0.0.1 · ESIR broj: 1795/0.0.1
+Proizvođač: OmniIT · Proizvod: Hospes POS · Verzija softvera: 0.0.1 · ESIR broj: 1795/0.0.1
 
 Hospes POS je softverski ESIR (elektronski sistem za izdavanje računa) za računar sa Windows-om.
 Radi sa L-PFR-om (lokalni procesor fiskalnih računa) ili sa V-PFR-om Poreske uprave.
@@ -29,7 +29,9 @@ Instalacija ne traži administratorska prava: program se instalira za korisnika 
 
 ## 3. Prvo pokretanje i podešavanja
 
-Pri prvom pokretanju otvara se kartica **Podešavanja**:
+Pri prvom pokretanju otvara se kartica **Podešavanja** (detaljno: Uputstvo za konfiguraciju):
+
+![Podešavanja pri prvom pokretanju](slike/15-podesavanja.png)
 
 1. **Kasiri**: upišite ime kasira i kliknite „Dodaj“. Ime izabranog kasira se štampa na svakom računu.
 2. **PFR**: popunite jedan od ova dva dela:

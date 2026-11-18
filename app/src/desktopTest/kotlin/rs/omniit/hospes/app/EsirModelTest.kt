@@ -853,4 +853,29 @@ class EsirModelTest {
             dodaci["TEST1234-TEST1234-1"],
         )
     }
+
+    @Test
+    fun pretragaZurnala() = runTest {
+        val m = EsirModel(okruzenje, this)
+        m.spremi("Espresso", "180")
+        m.izdaj()
+        m.poslednjiPosao!!.join()
+        m.spremi("Kapućino", "250")
+        m.izdaj()
+        m.poslednjiPosao!!.join()
+
+        m.pretragaZurnala = "kapu"
+        m.ucitajZurnal()
+        assertEquals(listOf("TEST1234-TEST1234-2"), m.zurnal.map { it.racun.invoiceNumber })
+        m.pretragaZurnala = "TEST1234-TEST1234-1"
+        m.ucitajZurnal()
+        assertEquals(listOf("TEST1234-TEST1234-1"), m.zurnal.map { it.racun.invoiceNumber })
+        m.pretragaZurnala = ""
+        m.zurnalOd = "2026-11-19"
+        m.ucitajZurnal()
+        assertTrue(m.zurnal.isEmpty(), "računi su od 18.11.")
+        m.zurnalOd = "18.11.2026"
+        m.ucitajZurnal()
+        assertEquals("Datum mora biti u formatu gggg-mm-dd: 18.11.2026", m.greskaPretrage)
+    }
 }
