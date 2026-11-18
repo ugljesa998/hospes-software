@@ -79,6 +79,14 @@ fun ElektronskiZurnal.refundacijeZa(brojRacuna: String): List<IzdatRacun> = svi(
         it.zahtev.referentDocumentNumber == brojRacuna
 }.reversed()
 
+/** Zbirna mesečna refundacija korporacijskih kartica (9.4) koja je već izdata kupcu za period, ili `null`. */
+fun ElektronskiZurnal.mesecnaRefundacijaKartica(pibKupca: String, od: String, doDana: String): IzdatRacun? = svi().firstOrNull {
+    it.zahtev.invoiceType == VrstaRacuna.PROMET &&
+        it.zahtev.transactionType == TipTransakcije.REFUNDACIJA &&
+        it.zahtev.buyerId == "10:$pibKupca" &&
+        it.zahtev.buyerCostCenterId == KorporativnaKartica.oznakaPerioda(od, doDana)
+}
+
 /** Promet Prodaja koja je već izdata iz predračuna [brojPredracuna], ili `null` (predračun se naplaćuje jednom). */
 fun ElektronskiZurnal.prometIzPredracuna(brojPredracuna: String): IzdatRacun? = svi().firstOrNull {
     it.zahtev.invoiceType == VrstaRacuna.PROMET &&

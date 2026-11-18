@@ -38,6 +38,15 @@ Radnje nad računom iz žurnala (izaberi račun, dugmad ispod naslova):
   više nego što je ostalo posle ranijih refundacija. Posle povraćaja gotovine (vrsta Promet) aplikacija odmah izdaje
   i Kopiju sa redom za potpis kupca.
 - „Kopija“: kopija računa vrste Promet (potvrđuje se drugim klikom).
+- „Poništi (greška)“ (9.3): refundacija celog Promet ili Avans računa na sopstveni PIB, bez povraćaja novca; zatim novi račun.
+
+Specijalni slučajevi (PURS 9.4, 9.5, 9.7), na računu koji se pravi:
+- „Poseban slučaj: Bez naknade“ (9.7): stavke sa „00:“, plaćanje drugo bezgotovinsko, ispod računa „*Промет без накнаде“.
+- „Poseban slučaj: Korporativna kartica“ (9.4): PIB firme i broj kartice, plaćanje vaučer. Jednom mesečno u Žurnalu:
+  „Korporativne kartice: mesečna refundacija“ (zbirna Promet Refundacija, jednom po firmi i mesecu); računi koje ona
+  obuhvata više se ne refundiraju ni ne poništavaju pojedinačno.
+- Kartica „Vaučer“ (9.5): stavka „20: Једнонаменски ваучер (oznaka)“, najviše jedan po poreskoj stopi; kada kupac plati
+  vaučerom, fiskalni račun se ne izdaje.
 Koristi isti `config/local.json`, isti žurnal (`racuni/`) i isti katalog (`podaci/katalog.json`) kao komandna linija.
 
 Kasir, PIN i podešavanja (kartica „Podešavanja“):

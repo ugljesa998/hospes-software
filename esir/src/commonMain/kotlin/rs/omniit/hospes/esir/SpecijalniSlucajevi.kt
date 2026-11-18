@@ -12,6 +12,11 @@ package rs.omniit.hospes.esir
  *
  * @param pibProdavca PIB obveznika (9 cifara); ako se ne navede, uzima se iz odgovora PFR-a (`tin`).
  */
+/** Da li se ovaj račun može poništiti po 9.3 (Promet Prodaja ili Avans Prodaja). */
+val IzdatRacun.mozePonistavanje: Boolean
+    get() = zahtev.transactionType == TipTransakcije.PRODAJA &&
+        (zahtev.invoiceType == VrstaRacuna.PROMET || zahtev.invoiceType == VrstaRacuna.AVANS)
+
 fun IzdatRacun.zahtevZaPonistavanje(pibProdavca: String? = null): ZahtevZaRacun {
     require(zahtev.transactionType == TipTransakcije.PRODAJA) { "Poništava se račun prodaje, a ovo je $oznaka" }
     require(zahtev.invoiceType == VrstaRacuna.PROMET || zahtev.invoiceType == VrstaRacuna.AVANS) {
@@ -104,10 +109,30 @@ object KorporativnaKartica {
             items = stavke,
             cashier = kasir,
             buyerId = "10:$pibKupca",
-            buyerCostCenterId = "$SIFRA_PERIODA:${uDdMmGggg(od)}_${uDdMmGggg(doDana)}",
+            buyerCostCenterId = oznakaPerioda(od, doDana),
             referentDocumentNumber = poslednji.racun.invoiceNumber,
             referentDocumentDT = poslednji.racun.sdcDateTime,
         )
+    }
+
+    /** Opciono polje kupca za zbirnu refundaciju: `60:ddmmgggg_ddmmgggg`. */
+    fun oznakaPerioda(od: String, doDana: String): String = "$SIFRA_PERIODA:${uDdMmGggg(od)}_${uDdMmGggg(doDana)}"
+
+    /** Prvi i poslednji dan meseca `gggg-mm`, npr. `2026-02` → `2026-02-01`, `2026-02-28`. */
+    fun periodMeseca(mesec: String): Pair<String, String> {
+        val delovi = Regex("""(\d{4})-(\d{2})""").matchEntire(mesec.trim())
+            ?: throw IllegalArgumentException("Mesec mora biti u formatu gggg-mm, npr. 2026-11")
+        val godina = delovi.groupValues[1].toInt()
+        val m = delovi.groupValues[2].toInt()
+        require(m in 1..12) { "Mesec mora biti od 01 do 12" }
+        val prestupna = (godina % 4 == 0 && godina % 100 != 0) || godina % 400 == 0
+        val dana = when (m) {
+            2 -> if (prestupna) 29 else 28
+            4, 6, 9, 11 -> 30
+            else -> 31
+        }
+        val mm = m.toString().padStart(2, '0')
+        return "$godina-$mm-01" to "$godina-$mm-$dana"
     }
 
     private val PIB = Regex("""\d{9}""")

@@ -139,4 +139,14 @@ class SpecijalniSlucajeviTest {
         assertEquals("2026-11-17T00:00:00", esirVremeZaDatumUplate("2026-11-17"))
         assertFailsWith<IllegalArgumentException> { esirVremeZaDatumUplate("17.11.2026") }
     }
+
+    @Test
+    fun periodMesecaIOznaka() {
+        assertEquals("2026-11-01" to "2026-11-30", KorporativnaKartica.periodMeseca("2026-11"))
+        assertEquals("2028-02-01" to "2028-02-29", KorporativnaKartica.periodMeseca("2028-02"), "prestupna godina")
+        assertEquals("2026-02-01" to "2026-02-28", KorporativnaKartica.periodMeseca(" 2026-02 "))
+        assertEquals("60:01112026_30112026", KorporativnaKartica.oznakaPerioda("2026-11-01", "2026-11-30"))
+        assertFailsWith<IllegalArgumentException> { KorporativnaKartica.periodMeseca("11-2026") }
+        assertFailsWith<IllegalArgumentException> { KorporativnaKartica.periodMeseca("2026-13") }
+    }
 }

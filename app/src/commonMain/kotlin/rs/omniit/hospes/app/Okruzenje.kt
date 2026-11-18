@@ -54,6 +54,9 @@ interface Okruzenje {
      */
     fun stampaj(brojRacuna: String, papir: SirinaPapira): String
 
+    /** Današnji datum, `gggg-mm-dd`. */
+    fun danas(): String
+
     /** Datum pre 30 dana, `gggg-mm-dd`, za podrazumevani prikaz žurnala. */
     fun pre30Dana(): String
 }

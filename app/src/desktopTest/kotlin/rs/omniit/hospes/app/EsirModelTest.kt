@@ -43,7 +43,7 @@ class EsirModelTest {
          "currentTaxRates":{"taxCategories":[{"name":"VAT","taxRates":[{"rate":10,"label":"A"},{"rate":0,"label":"B"}]}]}}
     """
     private val izdat = """
-        {"invoiceNumber":"TEST1234-TEST1234-1","sdcDateTime":"2026-11-18T13:00:00+01:00","totalAmount":675,
+        {"invoiceNumber":"TEST1234-TEST1234-1","sdcDateTime":"2026-11-18T13:00:00+01:00","tin":"RS115423827","totalAmount":675,
          "journal":"=== ФИСКАЛНИ РАЧУН ===\nKafa (A)\n======== КРАЈ ФИСКАЛНОГ РАЧУНА ========="}
     """
 
@@ -111,6 +111,7 @@ class EsirModelTest {
             return OtvorenPfr(LpfrVeza("http://lpfr.test/api", http), http, "L-PFR: test")
         }
         override fun tekstRacuna(brojRacuna: String): String? = null
+        override fun danas() = "2026-11-18"
         override fun pre30Dana() = "2026-01-01"
     }
 
@@ -489,5 +490,115 @@ class EsirModelTest {
         assertEquals(VrstaPfra.VPFR, sacuvano.pfr)
         assertEquals(VrstaPfra.VPFR, EsirModel(okruzenje, this).vrstaPfra, "posle ponovnog pokretanja isti PFR")
         m.zatvori()
+    }
+
+    /** Prvo stanje PFR-a, pa jedna stavka na računu. */
+    private suspend fun EsirModel.spremi(naziv: String = "Kafa", cena: String = "300") {
+        if (status == null) {
+            osvezi()
+            poslednjiPosao!!.join()
+        }
+        assertNull(dodajStavku(naziv, "1", cena, "A", ""))
+    }
+
+    @Test
+    fun prometBezNaknade() = runTest {
+        val m = EsirModel(okruzenje, this)
+        m.spremi()
+        m.posebanSlucaj = PosebanSlucaj.BEZ_NAKNADE
+        m.izdaj()
+        m.poslednjiPosao!!.join()
+        val r = poslatiRacuni().single()
+        assertEquals("Normal", r.tekst("invoiceType"))
+        assertEquals("00: Kafa", r["items"]!!.jsonArray.single().jsonObject["name"]!!.jsonPrimitive.content)
+        assertEquals("Other", r["payment"]!!.jsonArray.single().jsonObject["paymentType"]!!.jsonPrimitive.content)
+        assertEquals(PosebanSlucaj.NE, m.posebanSlucaj, "sledeći račun je opet običan")
+    }
+
+    @Test
+    fun korporativnaKarticaIMesecnaRefundacija() = runTest {
+        val m = EsirModel(okruzenje, this)
+        m.spremi()
+        m.posebanSlucaj = PosebanSlucaj.KORPORATIVNA
+        m.korporativniPib = "12345"
+        m.korporativnaKartica = "6666666"
+        m.izdaj()
+        assertEquals("PIB kupca mora imati 9 cifara", m.poruka?.tekst)
+
+        m.korporativniPib = "123456789"
+        m.izdaj()
+        m.poslednjiPosao!!.join()
+        val prodaja = poslatiRacuni().single()
+        assertEquals("10:123456789", prodaja.tekst("buyerId"))
+        assertEquals("50:6666666", prodaja.tekst("buyerCostCenterId"))
+        assertEquals("Voucher", prodaja["payment"]!!.jsonArray.single().jsonObject["paymentType"]!!.jsonPrimitive.content)
+
+        m.spremi(cena = "500")
+        m.posebanSlucaj = PosebanSlucaj.KORPORATIVNA
+        m.korporativnaKartica = "7777777"
+        m.izdaj()
+        m.poslednjiPosao!!.join()
+
+        assertEquals("2026-11", m.ovajMesec())
+        val pregled = m.pregledMesecneRefundacije("123456789", "2026-11").getOrThrow()
+        assertEquals(2, pregled.racuni.size)
+        assertEquals("800", pregled.iznos.toString())
+
+        assertNull(m.izdajMesecnuRefundaciju("123456789", "2026-11"))
+        m.poslednjiPosao!!.join()
+        val zbirna = poslatiRacuni().last()
+        assertEquals("Refund", zbirna.tekst("transactionType"))
+        assertEquals("60:01112026_30112026", zbirna.tekst("buyerCostCenterId"))
+        assertEquals("TEST1234-TEST1234-2", zbirna.tekst("referentDocumentNumber"), "poziv na poslednji račun u mesecu")
+        assertEquals("800", zbirna["payment"]!!.jsonArray.single().jsonObject["amount"].toString())
+
+        assertEquals(
+            "Zbirna refundacija za 2026-11-01 – 2026-11-30 je već izdata: TEST1234-TEST1234-3",
+            m.izdajMesecnuRefundaciju("123456789", "2026-11"),
+        )
+        val prvaProdaja = assertNotNull(okruzenje.zurnal.nadji("TEST1234-TEST1234-1"))
+        assertEquals("TEST1234-TEST1234-3", m.zbirnaRefundacijaZa(prvaProdaja)?.racun?.invoiceNumber, "obuhvata i račun na koji se ne poziva")
+        assertEquals("Račun je obuhvaćen zbirnom mesečnom refundacijom TEST1234-TEST1234-3", m.refundiraj(prvaProdaja, "10", "123456789"))
+        assertEquals("Račun je obuhvaćen zbirnom mesečnom refundacijom TEST1234-TEST1234-3", m.ponisti(prvaProdaja))
+        assertEquals(3, poslatiRacuni().size)
+        assertEquals("Nema prodaja korporacijskom karticom kupcu 123456789 od 2026-10-01 do 2026-10-31", m.izdajMesecnuRefundaciju("123456789", "2026-10"))
+    }
+
+    @Test
+    fun vaucerKaoStavka() = runTest {
+        val m = EsirModel(okruzenje, this)
+        m.osvezi()
+        m.poslednjiPosao!!.join()
+        assertEquals("Izaberi poresku oznaku", m.dodajVaucer("1000", null))
+        assertNull(m.dodajVaucer("1000", "A"))
+        assertEquals("Na računu već postoji vaučer sa oznakom A (najviše jedan po poreskoj stopi)", m.dodajVaucer("500", "A"))
+        assertEquals("Iznos vaučera može da ima najviše 2 decimale", m.dodajVaucer("1,555", "B"))
+        assertNull(m.dodajVaucer("500", "B"), "druga stopa može")
+        assertEquals(listOf("20: Једнонаменски ваучер (A)", "20: Једнонаменски ваучер (B)"), m.stavke.map { it.name })
+        m.vrstaRacuna = VrstaRacuna.PROMET
+        m.izdaj()
+        m.poslednjiPosao!!.join()
+        assertEquals("1500", poslatiRacuni().single()["payment"]!!.jsonArray.single().jsonObject["amount"].toString())
+    }
+
+    @Test
+    fun ponistavanjeNaSopstveniPib() = runTest {
+        val m = EsirModel(okruzenje, this)
+        val obuka = m.izdajProbni(VrstaRacuna.OBUKA)
+        assertEquals("Poništava se Promet Prodaja ili Avans Prodaja, a ovo je Obuka Prodaja", m.ponisti(obuka))
+
+        val promet = m.izdajProbni(VrstaRacuna.PROMET)
+        assertNull(m.ponisti(promet))
+        m.poslednjiPosao!!.join()
+        val ponistavanje = poslatiRacuni().last()
+        assertEquals("Normal", ponistavanje.tekst("invoiceType"))
+        assertEquals("Refund", ponistavanje.tekst("transactionType"))
+        assertEquals("10:115423827", ponistavanje.tekst("buyerId"), "sopstveni PIB iz odgovora PFR-a")
+        assertEquals(promet.racun.invoiceNumber, ponistavanje.tekst("referentDocumentNumber"))
+        assertEquals(3, poslatiRacuni().size, "bez kopije za potpis: novac se ne vraća")
+        assertTrue("je poništen; izdaj novi, ispravan račun" in m.poruka!!.tekst, m.poruka!!.tekst)
+
+        assertEquals("Račun je već refundiran (TEST1234-TEST1234-3); poništavanje nije moguće", m.ponisti(promet))
+        assertEquals(listOf("0"), m.preostaloZaRefundaciju(promet).map { it.toString() }, "poništen račun se više ne refundira")
     }
 }

@@ -80,6 +80,7 @@ import rs.omniit.hospes.esir.VrstaPfra
 import rs.omniit.hospes.esir.VrstaRacuna
 import rs.omniit.hospes.esir.naziv
 import rs.omniit.hospes.esir.pretrazi
+import rs.omniit.hospes.esir.mozePonistavanje
 import rs.omniit.hospes.esir.ukupno
 
 private val CRVENA = Color(0xFFB3261E)
@@ -172,14 +173,22 @@ private fun RacunKartica(m: EsirModel) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Račun", fontWeight = FontWeight.SemiBold)
-                Izbor(listOf(VrstaRacuna.OBUKA, VrstaRacuna.PROMET, VrstaRacuna.PREDRACUN), m.vrstaRacuna, { "${it.naziv} Prodaja" }) {
-                    m.vrstaRacuna = it
+                if (m.posebanSlucaj == PosebanSlucaj.NE) {
+                    Izbor(listOf(VrstaRacuna.OBUKA, VrstaRacuna.PROMET, VrstaRacuna.PREDRACUN), m.vrstaRacuna, { "${it.naziv} Prodaja" }) {
+                        m.vrstaRacuna = it
+                    }
+                } else {
+                    Text("Promet Prodaja · ${m.posebanSlucaj.naziv.lowercase()}", fontWeight = FontWeight.Medium)
                 }
             }
 
-            var rucno by remember { mutableStateOf(false) }
-            Izbor(listOf(false, true), rucno, { if (it) "Ručni unos" else "Iz kataloga" }, kompaktno = true) { rucno = it }
-            if (rucno) UnosStavke(m) else IzKataloga(m)
+            var unos by remember { mutableStateOf(NacinUnosa.KATALOG) }
+            Izbor(NacinUnosa.entries, unos, { it.naziv }, kompaktno = true) { unos = it }
+            when (unos) {
+                NacinUnosa.KATALOG -> IzKataloga(m)
+                NacinUnosa.RUCNO -> UnosStavke(m)
+                NacinUnosa.VAUCER -> UnosVaucera(m)
+            }
 
             if (m.stavke.isEmpty()) {
                 Text("Nema stavki", color = Color.Gray)
@@ -199,20 +208,24 @@ private fun RacunKartica(m: EsirModel) {
                 Text("${m.ukupno.zaStampu()} RSD", style = MaterialTheme.typography.titleLarge)
             }
 
-            Text("Plaćanje", fontWeight = FontWeight.SemiBold)
-            Izbor(
-                NACINI_PLACANJA,
-                m.nacinPlacanja,
-                { it.naziv },
-            ) { m.nacinPlacanja = it }
-            if (m.nacinPlacanja == NacinPlacanja.GOTOVINA) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    OutlinedTextField(m.primljeno, { m.primljeno = it }, label = { Text("Kupac dao") }, singleLine = true, modifier = Modifier.width(160.dp))
-                    m.kusur?.let { Text("Kusur: ${it.zaStampu()} RSD", style = MaterialTheme.typography.titleMedium) }
+            PosebanSlucajRacuna(m)
+
+            if (m.posebanSlucaj == PosebanSlucaj.NE) {
+                Text("Plaćanje", fontWeight = FontWeight.SemiBold)
+                Izbor(
+                    NACINI_PLACANJA,
+                    m.nacinPlacanja,
+                    { it.naziv },
+                ) { m.nacinPlacanja = it }
+                if (m.nacinPlacanja == NacinPlacanja.GOTOVINA) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        OutlinedTextField(m.primljeno, { m.primljeno = it }, label = { Text("Kupac dao") }, singleLine = true, modifier = Modifier.width(160.dp))
+                        m.kusur?.let { Text("Kusur: ${it.zaStampu()} RSD", style = MaterialTheme.typography.titleMedium) }
+                    }
                 }
             }
 
-            KupacNaRacunu(m)
+            if (m.posebanSlucaj != PosebanSlucaj.KORPORATIVNA) KupacNaRacunu(m)
 
             Text("Štampa: virtuelni štampač, papir ${m.papir.naziv} (Podešavanja)", color = Color.Gray, fontSize = 12.sp)
 
@@ -352,6 +365,7 @@ private fun ColumnScope.DesnaStrana(m: EsirModel, desno: Desno, naDesno: (Desno)
     } else if (desno == Desno.KATALOG) {
         KatalogArtikala(m)
     } else if (desno == Desno.ZURNAL) {
+        MesecnaRefundacijaKartica(m)
         ZurnalLista(m) { naDesno(Desno.RACUN) }
     } else {
         val p = m.prikazan
@@ -554,6 +568,110 @@ private fun KarticaVpfr(m: EsirModel) {
     }
 }
 
+private enum class NacinUnosa(val naziv: String) { KATALOG("Iz kataloga"), RUCNO("Ručni unos"), VAUCER("Vaučer") }
+
+/**
+ * Poseban slučaj računa koji se pravi (PURS 9.4, 9.7). Uvek se izdaje Promet Prodaja; plaćanje je određeno pravilom,
+ * pa se izbor plaćanja ne prikazuje.
+ */
+@Composable
+private fun PosebanSlucajRacuna(m: EsirModel) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("Poseban slučaj:", fontSize = 13.sp)
+        Izbor(PosebanSlucaj.entries, m.posebanSlucaj, { it.naziv }, kompaktno = true) { m.posebanSlucaj = it }
+    }
+    when (m.posebanSlucaj) {
+        PosebanSlucaj.NE -> {}
+        PosebanSlucaj.BEZ_NAKNADE -> Text(
+            "Promet bez naknade (PURS 9.7): stavke dobijaju „00:“ ispred naziva, plaćanje je „drugo bezgotovinsko“, " +
+                "a ispod računa se štampa „*Промет без накнаде“.",
+            color = Color.DarkGray,
+            fontSize = 12.sp,
+        )
+        PosebanSlucaj.KORPORATIVNA -> {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(m.korporativniPib, { m.korporativniPib = it }, label = { Text("PIB firme") }, singleLine = true, modifier = Modifier.weight(1f))
+                OutlinedTextField(m.korporativnaKartica, { m.korporativnaKartica = it }, label = { Text("Broj kartice") }, singleLine = true, modifier = Modifier.weight(1f))
+            }
+            Text(
+                "Korporacijska kartica (PURS 9.4): plaćanje je uvek vaučer. Jednom mesečno izdaj zbirnu refundaciju (Žurnal).",
+                color = Color.DarkGray,
+                fontSize = 12.sp,
+            )
+        }
+    }
+}
+
+/** Prodaja jednonamenskog vaučera (PURS 9.5): stavka „20: Једнонаменски ваучер (oznaka)“. */
+@Composable
+private fun UnosVaucera(m: EsirModel) {
+    var iznos by remember { mutableStateOf("") }
+    var oznaka by remember { mutableStateOf<String?>(null) }
+    var greska by remember { mutableStateOf<String?>(null) }
+    val oznake = m.stope.map { it.label }
+    if (oznaka == null || oznaka !in oznake) oznaka = oznake.firstOrNull()
+
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(iznos, { iznos = it; greska = null }, label = { Text("Iznos vaučera") }, singleLine = true, modifier = Modifier.width(160.dp))
+            Row(Modifier.weight(1f).horizontalScroll(rememberScrollState())) {
+                Izbor(oznake, oznaka, { it }, kompaktno = true) { oznaka = it }
+            }
+            Button(onClick = {
+                greska = m.dodajVaucer(iznos, oznaka)
+                if (greska == null) iznos = ""
+            }) { Text("Dodaj vaučer") }
+        }
+        Text(
+            "Najviše jedan vaučer po poreskoj stopi na računu. Kada kupac plati vaučerom, fiskalni račun se ne izdaje (PURS 9.5).",
+            color = Color.DarkGray,
+            fontSize = 12.sp,
+        )
+        greska?.let { Text(it, color = CRVENA, fontSize = 13.sp) }
+    }
+}
+
+/** Zbirna mesečna refundacija korporacijskih kartica (PURS 9.4): kupac (PIB) i mesec, pa pregled pre izdavanja. */
+@Composable
+private fun MesecnaRefundacijaKartica(m: EsirModel) {
+    var otvoreno by remember { mutableStateOf(false) }
+    var pib by remember { mutableStateOf("") }
+    var mesec by remember { mutableStateOf(m.ovajMesec()) }
+    var greska by remember { mutableStateOf<String?>(null) }
+    TextButton(onClick = { otvoreno = !otvoreno }) {
+        Text("Korporativne kartice: mesečna refundacija " + if (otvoreno) "▲" else "▼")
+    }
+    if (!otvoreno) return
+    val pregled = remember(pib, mesec, m.zurnal) { if (pib.trim().length == 9) m.pregledMesecneRefundacije(pib, mesec) else null }
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(pib, { pib = it; greska = null }, label = { Text("PIB firme") }, singleLine = true, modifier = Modifier.weight(1f))
+                OutlinedTextField(mesec, { mesec = it; greska = null }, label = { Text("Mesec (gggg-mm)") }, singleLine = true, modifier = Modifier.width(170.dp))
+            }
+            val p = pregled?.getOrNull()
+            when {
+                pregled == null -> Text("Upiši PIB firme (9 cifara).", color = Color.Gray, fontSize = 13.sp)
+                p == null -> Text(pregled.exceptionOrNull()?.message.orEmpty(), color = CRVENA, fontSize = 13.sp)
+                else -> Text(
+                    "Računa korporativnom karticom od ${p.od} do ${p.doDana}: ${p.racuni.size}, ukupno ${p.iznos.zaStampu()} RSD",
+                    fontSize = 13.sp,
+                )
+            }
+            Text("Izdaje se jedna Promet Refundacija za sve te račune, plaćanje vaučer, uz poziv na poslednji račun.", color = Color.DarkGray, fontSize = 12.sp)
+            Row {
+                Spacer(Modifier.weight(1f))
+                Button(
+                    onClick = { greska = m.izdajMesecnuRefundaciju(pib, mesec) },
+                    enabled = !m.radi && m.status != null && p != null && p.racuni.isNotEmpty(),
+                ) { Text("Izdaj zbirnu refundaciju") }
+            }
+            greska?.let { Text(it, color = CRVENA, fontSize = 13.sp) }
+        }
+    }
+    Spacer(Modifier.height(6.dp))
+}
+
 private val NACINI_PLACANJA = listOf(
     NacinPlacanja.GOTOVINA,
     NacinPlacanja.PLATNA_KARTICA,
@@ -608,11 +726,13 @@ private fun RadnjeRacuna(m: EsirModel, izdat: IzdatRacun) {
     var greska by remember(broj) { mutableStateOf<String?>(null) }
     val refundacije = remember(broj, m.zurnal) { if (izdat.mozeRefundacija) m.refundacijeZa(izdat) else emptyList() }
     val preostalo = remember(broj, m.zurnal) { if (izdat.mozeRefundacija) m.preostaloZaRefundaciju(izdat) else emptyList() }
-    val imaZaRefundaciju = preostalo.any { it > Decimal4.NULA }
+    val zbirna = remember(broj, m.zurnal) { m.zbirnaRefundacijaZa(izdat) }
+    val imaZaRefundaciju = zbirna == null && preostalo.any { it > Decimal4.NULA }
     val predracun = izdat.zahtev.invoiceType == VrstaRacuna.PREDRACUN && izdat.zahtev.transactionType == TipTransakcije.PRODAJA
     val naplacen = remember(broj, m.zurnal) { if (predracun) m.prometIzPredracuna(izdat) else null }
     val mozeSlati = !m.radi && m.status != null
-    if (!izdat.mozeRefundacija && !izdat.mozeKopija && !predracun) return
+    var potvrdaPonistavanja by remember(broj) { mutableStateOf(false) }
+    if (!izdat.mozeRefundacija && !izdat.mozeKopija && !predracun && !izdat.mozePonistavanje) return
 
     fun prebaci(p: PanelRacuna) {
         panel = if (panel == p) null else p
@@ -634,7 +754,7 @@ private fun RadnjeRacuna(m: EsirModel, izdat: IzdatRacun) {
                 Text(if (refundacije.isEmpty()) "Refundacija" else "Refundacija ostatka")
             }
         }
-        if (izdat.mozeKopija) {
+        if (izdat.mozeKopija && !potvrdaPonistavanja) {
             if (potvrdaKopije) {
                 Text("Izdati kopiju?", fontSize = 13.sp)
                 Button(onClick = { greska = m.izdajKopiju(izdat); potvrdaKopije = false }, enabled = mozeSlati) { Text("Da, izdaj kopiju") }
@@ -643,8 +763,34 @@ private fun RadnjeRacuna(m: EsirModel, izdat: IzdatRacun) {
                 OutlinedButton(onClick = { potvrdaKopije = true; panel = null; greska = null }, enabled = mozeSlati) { Text("Kopija") }
             }
         }
+        // 9.3: poništava se samo račun koji još nije refundiran.
+        if (izdat.mozePonistavanje && refundacije.isEmpty() && zbirna == null && !potvrdaKopije) {
+            if (potvrdaPonistavanja) {
+                Text("Poništiti račun?", fontSize = 13.sp)
+                Button(
+                    onClick = { greska = m.ponisti(izdat); potvrdaPonistavanja = false },
+                    enabled = mozeSlati,
+                    colors = ButtonDefaults.buttonColors(containerColor = CRVENA),
+                ) { Text("Da, poništi") }
+                TextButton(onClick = { potvrdaPonistavanja = false }) { Text("Ne") }
+            } else {
+                TextButton(onClick = { potvrdaPonistavanja = true; panel = null; greska = null }, enabled = mozeSlati) {
+                    Text("Poništi (greška)", color = CRVENA)
+                }
+            }
+        }
     }
-    if (refundacije.isNotEmpty()) {
+    if (potvrdaPonistavanja) {
+        Text(
+            "Poništavanje (PURS 9.3): izdaje se refundacija celog računa na sopstveni PIB, novac se ne vraća. " +
+                "Posle toga izdaj novi, ispravan račun.",
+            color = Color.DarkGray,
+            fontSize = 12.sp,
+        )
+    }
+    if (zbirna != null) {
+        Text("Obuhvaćen zbirnom mesečnom refundacijom ${zbirna.racun.invoiceNumber}", color = Color.Gray, fontSize = 13.sp)
+    } else if (refundacije.isNotEmpty()) {
         Text(
             (if (imaZaRefundaciju) "Delimično refundiran: " else "Refundiran: ") + refundacije.joinToString { it.racun.invoiceNumber },
             color = Color.Gray,

@@ -16,6 +16,9 @@ import rs.omniit.hospes.esir.Decimal4
 import rs.omniit.hospes.esir.EsirGreska
 import rs.omniit.hospes.esir.FilterZurnala
 import rs.omniit.hospes.esir.IzdatRacun
+import rs.omniit.hospes.esir.PrometBezNaknade
+import rs.omniit.hospes.esir.KorporativnaKartica
+import rs.omniit.hospes.esir.JednonamenskiVaucer
 import rs.omniit.hospes.esir.VpfrPodesavanja
 import rs.omniit.hospes.esir.Podesavanja
 import rs.omniit.hospes.esir.LpfrPodesavanja
@@ -42,9 +45,26 @@ import rs.omniit.hospes.esir.noviRequestId
 import rs.omniit.hospes.esir.poSifriIliGtinu
 import rs.omniit.hospes.esir.redZaPotpisKupca
 import rs.omniit.hospes.esir.prometIzPredracuna
+import rs.omniit.hospes.esir.zahtevZaPonistavanje
+import rs.omniit.hospes.esir.datum
+import rs.omniit.hospes.esir.mesecnaRefundacijaKartica
 import rs.omniit.hospes.esir.refundacijaZa
 import rs.omniit.hospes.esir.refundacijeZa
 import rs.omniit.hospes.esir.uvezi
+
+/** Posebni slučajevi prodaje (PURS uputstvo, poglavlje 9); uvek se izdaje Promet Prodaja. */
+enum class PosebanSlucaj(val naziv: String) {
+    NE("Ne"),
+
+    /** 9.7: stavke sa „00: “, plaćanje drugo bezgotovinsko, napomena na računu. */
+    BEZ_NAKNADE("Bez naknade"),
+
+    /** 9.4: kupac (PIB) i broj korporacijske kartice, plaćanje uvek vaučer. */
+    KORPORATIVNA("Korporativna kartica"),
+}
+
+/** Šta bi ušlo u zbirnu mesečnu refundaciju korporacijskih kartica (9.4). */
+data class MesecnaRefundacija(val od: String, val doDana: String, val racuni: List<IzdatRacun>, val iznos: Decimal4)
 
 /** Poruka korisniku ispod obračuna. */
 data class Poruka(val tekst: String, val greska: Boolean)
@@ -88,6 +108,11 @@ class EsirModel(private val okruzenje: Okruzenje, private val scope: CoroutineSc
     var vrstaRacuna by mutableStateOf(VrstaRacuna.OBUKA)
     var nacinPlacanja by mutableStateOf(NacinPlacanja.GOTOVINA)
     var primljeno by mutableStateOf("")
+
+    /** Poseban slučaj za račun koji se pravi (9.4, 9.7); posle izdavanja se vraća na „Ne“. */
+    var posebanSlucaj by mutableStateOf(PosebanSlucaj.NE)
+    var korporativniPib by mutableStateOf("")
+    var korporativnaKartica by mutableStateOf("")
 
     /** Kupac na računu (npr. „na firmu“: šifra 10 = PIB); prazan broj = račun bez kupca. */
     var sifraKupca by mutableStateOf("10")
@@ -378,13 +403,6 @@ class EsirModel(private val okruzenje: Okruzenje, private val scope: CoroutineSc
             poruka = Poruka("Račun nema stavki", greska = true)
             return
         }
-        val naplata = try {
-            val dato = primljeno.takeIf { it.isNotBlank() && nacinPlacanja == NacinPlacanja.GOTOVINA }?.let(::broj)
-            Obracun.naplata(ukupno, listOf(nacinPlacanja to null), dato)
-        } catch (e: IllegalArgumentException) {
-            poruka = Poruka(e.message ?: "Neispravna naplata", greska = true)
-            return
-        }
         val kupac = brojKupca.trim().takeIf { it.isNotEmpty() }?.let { "$sifraKupca:$it" }
         kupac?.let { id ->
             SifarnikKupca.proveriIdKupca(id)?.let {
@@ -392,15 +410,29 @@ class EsirModel(private val okruzenje: Okruzenje, private val scope: CoroutineSc
                 return
             }
         }
-        val zahtev = ZahtevZaRacun(
-            invoiceType = vrstaRacuna,
-            transactionType = TipTransakcije.PRODAJA,
-            payment = naplata.placanja,
-            items = stavke.toList(),
-            cashier = kasir,
-            buyerId = kupac,
-        )
-        val dodatak = if (naplata.kusur > Decimal4.NULA) listOf("Повраћај:" + naplata.kusur.zaStampu().padStart(31)) else emptyList()
+        val (zahtev, dodatak) = try {
+            when (posebanSlucaj) {
+                PosebanSlucaj.NE -> {
+                    val dato = primljeno.takeIf { it.isNotBlank() && nacinPlacanja == NacinPlacanja.GOTOVINA }?.let(::broj)
+                    val naplata = Obracun.naplata(ukupno, listOf(nacinPlacanja to null), dato)
+                    ZahtevZaRacun(
+                        invoiceType = vrstaRacuna,
+                        transactionType = TipTransakcije.PRODAJA,
+                        payment = naplata.placanja,
+                        items = stavke.toList(),
+                        cashier = kasir,
+                        buyerId = kupac,
+                    ) to if (naplata.kusur > Decimal4.NULA) listOf("Повраћај:" + naplata.kusur.zaStampu().padStart(31)) else emptyList()
+                }
+                // 9.7: napomena ide u „reklamno polje“, deo računa koji štampa ESIR.
+                PosebanSlucaj.BEZ_NAKNADE -> PrometBezNaknade.zahtev(stavke.toList(), kasir, kupac) to listOf(PrometBezNaknade.NAPOMENA)
+                PosebanSlucaj.KORPORATIVNA ->
+                    KorporativnaKartica.zahtevZaProdaju(stavke.toList(), korporativniPib.trim(), korporativnaKartica.trim(), kasir) to emptyList()
+            }
+        } catch (e: IllegalArgumentException) {
+            poruka = Poruka(e.message ?: "Neispravna naplata", greska = true)
+            return
+        }
 
         posao { veza ->
             val rezultat = izdajZahtev(veza, zahtev, dodatak)
@@ -409,9 +441,93 @@ class EsirModel(private val okruzenje: Okruzenje, private val scope: CoroutineSc
                 stavke.clear()
                 primljeno = ""
                 brojKupca = ""
+                posebanSlucaj = PosebanSlucaj.NE
+                korporativnaKartica = ""
             }
         }
     }
+
+    /**
+     * Jednonamenski vaučer (9.5) kao stavka računa: „20: Једнонаменски ваучер (oznaka)“; na računu najviše jedan
+     * vaučer po poreskoj oznaci. Vraća grešku ili `null`.
+     */
+    fun dodajVaucer(iznos: String, oznaka: String?): String? {
+        if (oznaka == null) return "Izaberi poresku oznaku"
+        if (stavke.any { JednonamenskiVaucer.jeVaucer(it) && it.labels == listOf(oznaka) }) {
+            return "Na računu već postoji vaučer sa oznakom $oznaka (najviše jedan po poreskoj stopi)"
+        }
+        return try {
+            val vrednost = broj(iznos)
+            require(vrednost.brojDecimala <= 2) { "Iznos vaučera može da ima najviše 2 decimale" }
+            stavke += JednonamenskiVaucer.stavka(oznaka, vrednost)
+            null
+        } catch (e: IllegalArgumentException) {
+            e.message ?: "Neispravan iznos"
+        }
+    }
+
+    /**
+     * Poništavanje računa sa greškom (9.3): refundacija celog računa na **sopstveni PIB**, bez povraćaja novca kupcu.
+     * Posle toga kasir izdaje novi, ispravan račun. Delimično refundiran račun se ne poništava.
+     */
+    fun ponisti(original: IzdatRacun): String? {
+        bezKasira()?.let { return it }
+        zbirnaRefundacijaZa(original)?.let { return "Račun je obuhvaćen zbirnom mesečnom refundacijom ${it.racun.invoiceNumber}" }
+        refundacijeZa(original).takeIf { it.isNotEmpty() }?.let { r ->
+            return "Račun je već refundiran (${r.joinToString { it.racun.invoiceNumber }}); poništavanje nije moguće"
+        }
+        val zahtev = try {
+            original.zahtevZaPonistavanje()
+        } catch (e: IllegalArgumentException) {
+            return e.message ?: "Račun nije moguće poništiti"
+        }
+        posao { veza ->
+            val r = izdajZahtev(veza, zahtev)
+            poruka = if (r.izdat != null) Poruka("${r.poruka.tekst} Račun ${original.racun.invoiceNumber} je poništen; izdaj novi, ispravan račun.", r.poruka.greska) else r.poruka
+        }
+        return null
+    }
+
+    /**
+     * Zbirna mesečna refundacija (9.4) koja već obuhvata ovaj račun korporacijskom karticom, ili `null`.
+     * Takav račun se više ne refundira ni ne poništava pojedinačno (novac bi se vratio dvaput).
+     */
+    fun zbirnaRefundacijaZa(izdat: IzdatRacun): IzdatRacun? {
+        val kupac = izdat.zahtev.buyerId ?: return null
+        if (!kupac.startsWith("10:")) return null
+        val pib = kupac.removePrefix("10:")
+        if (!KorporativnaKartica.jeProdajaKarticom(izdat, pib)) return null
+        val mesec = izdat.datum?.take(7) ?: return null
+        val (od, doDana) = runCatching { KorporativnaKartica.periodMeseca(mesec) }.getOrNull() ?: return null
+        return okruzenje.zurnal.mesecnaRefundacijaKartica(pib, od, doDana)
+    }
+
+    /** Šta bi ušlo u zbirnu mesečnu refundaciju korporacijskih kartica za kupca [pib] i mesec `gggg-mm`. */
+    fun pregledMesecneRefundacije(pib: String, mesec: String): Result<MesecnaRefundacija> = runCatching {
+        val (od, doDana) = KorporativnaKartica.periodMeseca(mesec)
+        val racuni = okruzenje.zurnal.pretrazi(FilterZurnala(od = od, doDana = doDana, kupac = "10:${pib.trim()}"))
+            .filter { KorporativnaKartica.jeProdajaKarticom(it, pib.trim()) }
+        MesecnaRefundacija(od, doDana, racuni, racuni.fold(Decimal4.NULA) { zbir, r -> zbir + Obracun.ukupno(r.zahtev.items) })
+    }
+
+    /** Zbirna mesečna Promet Refundacija korporacijskih kartica (9.4), jednom po kupcu i mesecu. Vraća grešku ili `null`. */
+    fun izdajMesecnuRefundaciju(pib: String, mesec: String): String? {
+        bezKasira()?.let { return it }
+        val pregled = pregledMesecneRefundacije(pib, mesec).getOrElse { return it.message }
+        okruzenje.zurnal.mesecnaRefundacijaKartica(pib.trim(), pregled.od, pregled.doDana)?.let {
+            return "Zbirna refundacija za ${pregled.od} – ${pregled.doDana} je već izdata: ${it.racun.invoiceNumber}"
+        }
+        val zahtev = try {
+            KorporativnaKartica.zahtevZaMesecnuRefundaciju(pregled.racuni, pib.trim(), pregled.od, pregled.doDana, kasir)
+        } catch (e: IllegalArgumentException) {
+            return e.message
+        }
+        posao { veza -> poruka = izdajZahtev(veza, zahtev).poruka }
+        return null
+    }
+
+    /** Današnji mesec `gggg-mm` (za mesečnu refundaciju). */
+    fun ovajMesec(): String = okruzenje.danas().take(7)
 
     /** Refundacija koja je već izdata za ovaj račun, ili `null`. */
     fun refundacijaZa(izdat: IzdatRacun): IzdatRacun? = okruzenje.zurnal.refundacijaZa(izdat.racun.invoiceNumber)
@@ -455,6 +571,7 @@ class EsirModel(private val okruzenje: Okruzenje, private val scope: CoroutineSc
         if (brojKupca.isBlank()) return "Unesi broj (${SifarnikKupca.idKupca[sifraKupca] ?: "dokument kupca"})"
         val id = "$sifraKupca:${brojKupca.trim()}"
         SifarnikKupca.proveriIdKupca(id)?.let { return it }
+        zbirnaRefundacijaZa(original)?.let { return "Račun je obuhvaćen zbirnom mesečnom refundacijom ${it.racun.invoiceNumber}" }
         val ranije = refundacijeZa(original)
         val preostalo = original.preostaloZaRefundaciju(ranije)
         if (preostalo.all { it == Decimal4.NULA }) {

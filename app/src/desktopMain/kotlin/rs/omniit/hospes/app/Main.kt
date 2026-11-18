@@ -122,6 +122,8 @@ private class DesktopOkruzenje(private val koren: File) : Okruzenje {
         return stampac.stampaj(brojRacuna, otisak)
     }
 
+    override fun danas(): String = LocalDate.now().toString()
+
     override fun pre30Dana(): String = LocalDate.now().minusDays(30).toString()
 }
 
