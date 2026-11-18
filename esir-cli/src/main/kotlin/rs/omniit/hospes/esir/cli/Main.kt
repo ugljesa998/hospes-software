@@ -53,8 +53,9 @@ private fun ispisiPomoc() {
         Komande:
           status                              stanje PFR-a: dostupnost, PIN, šifre stanja, poreske stope
           pin                                 PIN iz config/local.json (jednom, bez ponavljanja)
-          racun [--vrsta obuka|promet|predracun] [--placanje gotovina] [--oznaka A]
-                                              „Test kafa“ 1 × 300 RSD (podrazumevano Obuka, gotovina)
+          racun [--vrsta obuka|promet|predracun] [--stavka 'Naziv;količina;cena[;oznaka[;popust%]]']...
+                [--placanje gotovina | --placanje kartica:500 ...] [--primljeno 1000] [--oznaka A] [--kupac 10:123]
+                                              račun sa obračunom (bez --stavka: „Test kafa“ 1 × 300, Obuka, gotovina)
           refundacija <broj> --kupac 20:123   refundacija celog računa (Promet, Obuka, Predračun), uz ID kupca
           kopija <broj>                       kopija računa vrste Promet
           iz-predracuna <broj> [--placanje kartica]

@@ -13,6 +13,7 @@ import kotlinx.serialization.json.JsonEncoder
 import kotlinx.serialization.json.JsonUnquotedLiteral
 import kotlinx.serialization.json.jsonPrimitive
 import kotlin.jvm.JvmInline
+import kotlin.math.abs
 
 /**
  * Tačan decimalni broj sa najviše 4 decimale, kao `decimal(28,4)` u TaxCore API-ju.
@@ -29,6 +30,43 @@ value class Decimal4 private constructor(val unscaled: Long) : Comparable<Decima
     operator fun plus(other: Decimal4): Decimal4 = uOpsegu(unscaled + other.unscaled)
 
     operator fun minus(other: Decimal4): Decimal4 = uOpsegu(unscaled - other.unscaled)
+
+    /**
+     * Proizvod, zaokružen na 4 decimale (polovina se zaokružuje naviše, od nule).
+     * Baca grešku ako bi rezultat izašao iz opsega, umesto da tiho pogreši.
+     */
+    operator fun times(other: Decimal4): Decimal4 {
+        val a = unscaled
+        val b = other.unscaled
+        if (a == 0L || b == 0L) return NULA
+        require(abs(a) <= (Long.MAX_VALUE - FAKTOR) / abs(b)) { "Iznos je van dozvoljenog opsega" }
+        val proizvod = a * b
+        return uOpsegu(podeliSaZaokruzivanjem(proizvod, FAKTOR))
+    }
+
+    /** Stoti deo vrednosti (npr. za procenat), zaokružen na 4 decimale. */
+    fun stotiDeo(): Decimal4 = uOpsegu(podeliSaZaokruzivanjem(unscaled, 100))
+
+    /** Zaokruživanje na [decimale] (0–4); polovina se zaokružuje naviše (od nule), kao u PURS uputstvu. */
+    fun zaokruzi(decimale: Int): Decimal4 {
+        require(decimale in 0..SKALA) { "Broj decimala mora biti od 0 do $SKALA" }
+        var korak = 1L
+        repeat(SKALA - decimale) { korak *= 10 }
+        return uOpsegu(podeliSaZaokruzivanjem(unscaled, korak) * korak)
+    }
+
+    /** Broj decimala koje stvarno postoje (bez nula na kraju), npr. 2 za `27.27`. */
+    val brojDecimala: Int
+        get() {
+            var ostatak = abs(unscaled) % FAKTOR
+            if (ostatak == 0L) return 0
+            var decimala = SKALA
+            while (ostatak % 10 == 0L) {
+                ostatak /= 10
+                decimala--
+            }
+            return decimala
+        }
 
     /** Zapis bez nepotrebnih nula na kraju: `10`, `0.5`, `27.2727`. */
     override fun toString(): String {
@@ -65,6 +103,12 @@ value class Decimal4 private constructor(val unscaled: Long) : Comparable<Decima
         private const val MAKS_UNSCALED = 999_999_999_999_999_999L
 
         fun izUnscaled(unscaled: Long): Decimal4 = uOpsegu(unscaled)
+
+        /** Deljenje celih brojeva sa zaokruživanjem polovine od nule (1.5 → 2, -1.5 → -2). */
+        private fun podeliSaZaokruzivanjem(deljenik: Long, delilac: Long): Long {
+            val pola = delilac / 2
+            return if (deljenik >= 0) (deljenik + pola) / delilac else -((-deljenik + pola) / delilac)
+        }
 
         private fun uOpsegu(unscaled: Long): Decimal4 {
             require(unscaled in -MAKS_UNSCALED..MAKS_UNSCALED) { "Iznos je van dozvoljenog opsega" }

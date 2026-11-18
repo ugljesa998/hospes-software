@@ -5,9 +5,11 @@ import rs.omniit.hospes.esir.EsirGreska
 import rs.omniit.hospes.esir.EsirHttp
 import rs.omniit.hospes.esir.FiskalizovanRacun
 import rs.omniit.hospes.esir.IzdatRacun
-import rs.omniit.hospes.esir.PfrVeza
 import rs.omniit.hospes.esir.NacinPlacanja
+import rs.omniit.hospes.esir.Obracun
+import rs.omniit.hospes.esir.PfrVeza
 import rs.omniit.hospes.esir.Placanje
+import rs.omniit.hospes.esir.PoreskaStopa
 import rs.omniit.hospes.esir.RezultatRacuna
 import rs.omniit.hospes.esir.SifreStanja
 import rs.omniit.hospes.esir.StatusOdgovor
@@ -24,8 +26,12 @@ import java.util.Base64
 internal val folderRacuna = File("racuni")
 
 /**
- * `racun [--vrsta obuka|promet|predracun] [--placanje gotovina] [--oznaka A]`:
- * izdaje račun „Test kafa“, 1 × 300 RSD. Podrazumevano je Obuka Prodaja, gotovina, kao treći `curl` test.
+ * `racun [--vrsta obuka|promet|predracun] [--stavka "Naziv;količina;cena[;oznaka[;popust%]]"]...
+ *        [--placanje gotovina | --placanje kartica:500 ...] [--primljeno 1000] [--oznaka A] [--kupac 10:123]`
+ *
+ * Bez `--stavka` izdaje „Test kafa“ 1 × 300 RSD; bez `--placanje` plaća se gotovinom.
+ * `--stavka` i `--placanje` mogu da se navedu više puta. Jedno plaćanje sme biti bez iznosa (dobija ostatak).
+ * `--primljeno` je gotovina koju je kupac dao; razlika je kusur (ne šalje se PFR-u).
  */
 internal suspend fun komandaRacun(argumenti: List<String>) {
     val vrsta = when (val v = vrednostOpcije(argumenti, "--vrsta") ?: "obuka") {
@@ -34,31 +40,79 @@ internal suspend fun komandaRacun(argumenti: List<String>) {
         "predracun" -> VrstaRacuna.PREDRACUN
         else -> prekini("Nepoznata vrsta „$v“. Dozvoljeno: obuka, promet, predracun")
     }
-    val nacinPlacanja = nacinPlacanja(argumenti) ?: NacinPlacanja.GOTOVINA
-    val trazenaOznaka = vrednostOpcije(argumenti, "--oznaka") ?: "A"
+    val podrazumevanaOznaka = vrednostOpcije(argumenti, "--oznaka") ?: "A"
+    val opisiStavki = vrednostiOpcije(argumenti, "--stavka").ifEmpty { listOf("Test kafa;1;300") }
+    val delovi = vrednostiOpcije(argumenti, "--placanje").ifEmpty { listOf("gotovina") }.map(::deoNaplate)
+    val primljeno = vrednostOpcije(argumenti, "--primljeno")?.let { broj(it, "--primljeno") }
+    val kupac = vrednostOpcije(argumenti, "--kupac")
 
     saPfrom(argumenti) { veza, status ->
         val stope = status.currentTaxRates?.taxCategories.orEmpty().flatMap { it.taxRates }
-        val stopa = stope.firstOrNull { it.label == trazenaOznaka }
-            ?: prekini(
-                "Poreska oznaka $trazenaOznaka ne postoji u važećim stopama PFR-a. " +
-                    "Dostupne: ${stope.joinToString(", ") { "${it.label} (${it.rate}%)" }}",
-            )
-        val iznos = Decimal4.parse("300")
+        val stavke = opisiStavki.map { stavkaIzOpisa(it, podrazumevanaOznaka, stope) }
+        val ukupno = Obracun.ukupno(stavke)
+        val naplata = try {
+            Obracun.naplata(ukupno, delovi, primljeno)
+        } catch (e: IllegalArgumentException) {
+            prekini(e.message ?: e.toString())
+        }
         val zahtev = ZahtevZaRacun(
             invoiceType = vrsta,
             transactionType = TipTransakcije.PRODAJA,
-            payment = listOf(Placanje(iznos, nacinPlacanja)),
-            items = listOf(Stavka("Test kafa", Decimal4.parse("1"), iznos, iznos, listOf(stopa.label))),
+            payment = naplata.placanja,
+            items = stavke,
             cashier = "Hospes test",
+            buyerId = kupac,
         )
-        red("Poreska oznaka", "${stopa.label} (${stopa.rate}%, iz statusa PFR-a)")
+
+        println("Obračun:")
+        stavke.forEach { s ->
+            println("  ${s.name.take(24).padEnd(24)} ${s.quantity.toString().padStart(7)} × ${s.unitPrice.zaStampu().padStart(10)} = ${s.totalAmount.zaStampu().padStart(10)}  [${s.labels.joinToString()}]")
+        }
+        red("Ukupno", "${ukupno.zaStampu()} RSD")
+        naplata.placanja.forEach { red("  ${it.paymentType.naziv}", "${it.amount.zaStampu()} RSD") }
+        if (primljeno != null) red("  Primljeno / kusur", "${primljeno.zaStampu()} / ${naplata.kusur.zaStampu()} RSD")
+        println()
+
         izdajIPrikazi(
             veza, status, zahtev,
-            "${vrsta.naziv} Prodaja: „Test kafa“ 1 × 300 RSD, ${nacinPlacanja.naziv.lowercase()}",
+            "${vrsta.naziv} Prodaja: ${stavke.size} stavk${if (stavke.size == 1) "a" else "e"}, ukupno ${ukupno.zaStampu()} RSD",
+            dodatak = if (naplata.kusur > Decimal4.NULA) listOf("Повраћај:" + naplata.kusur.zaStampu().padStart(31)) else emptyList(),
         )
     }
 }
+
+/** Stavka iz opisa „Naziv;količina;cena[;oznaka[;popust%]]“, npr. „Kafa;3;250;A;10“ ili „Sir /kg;0.250;1199.99“. */
+private fun stavkaIzOpisa(opis: String, podrazumevanaOznaka: String, stope: List<PoreskaStopa>): Stavka {
+    val delovi = opis.split(";").map { it.trim() }
+    if (delovi.size !in 3..5 || delovi[0].isEmpty()) {
+        prekini("Neispravna stavka „$opis“. Format: \"Naziv;količina;cena[;oznaka[;popust%]]\", npr. \"Kafa;3;250;A;10\"")
+    }
+    val oznaka = delovi.getOrNull(3)?.takeIf { it.isNotEmpty() } ?: podrazumevanaOznaka
+    if (stope.none { it.label == oznaka }) {
+        prekini("Poreska oznaka $oznaka ne postoji u važećim stopama PFR-a. Dostupne: ${stope.joinToString(", ") { "${it.label} (${it.rate}%)" }}")
+    }
+    return try {
+        Obracun.stavka(
+            naziv = delovi[0],
+            kolicina = broj(delovi[1], "količina u „$opis“"),
+            jedinicnaCena = broj(delovi[2], "cena u „$opis“"),
+            oznake = listOf(oznaka),
+            popustProcenat = delovi.getOrNull(4)?.removeSuffix("%")?.let { broj(it, "popust u „$opis“") } ?: Decimal4.NULA,
+        )
+    } catch (e: IllegalArgumentException) {
+        prekini("Stavka „$opis“: ${e.message}")
+    }
+}
+
+/** Deo naplate iz „gotovina“ ili „kartica:500“. */
+private fun deoNaplate(opis: String): Pair<NacinPlacanja, Decimal4?> {
+    val naziv = opis.substringBefore(':')
+    val iznos = opis.substringAfter(':', "").takeIf { it.isNotEmpty() }?.let { broj(it, "iznos u „$opis“") }
+    return nacinIzNaziva(naziv) to iznos
+}
+
+private fun broj(tekst: String, sta: String): Decimal4 =
+    runCatching { Decimal4.parse(tekst.replace(',', '.')) }.getOrElse { prekini("Neispravan broj za $sta: „$tekst“") }
 
 /** `iz-predracuna <PFR broj predračuna> [--placanje gotovina]`: Promet Prodaja uz poziv na predračun. */
 internal suspend fun komandaIzPredracuna(argumenti: List<String>) {
@@ -81,8 +135,10 @@ internal suspend fun komandaIzPredracuna(argumenti: List<String>) {
 }
 
 internal fun nacinPlacanja(argumenti: List<String>): NacinPlacanja? =
-    when (val p = vrednostOpcije(argumenti, "--placanje")) {
-        null -> null
+    vrednostOpcije(argumenti, "--placanje")?.let(::nacinIzNaziva)
+
+private fun nacinIzNaziva(p: String): NacinPlacanja =
+    when (p) {
         "gotovina" -> NacinPlacanja.GOTOVINA
         "kartica" -> NacinPlacanja.PLATNA_KARTICA
         "cek" -> NacinPlacanja.CEK
@@ -304,3 +360,9 @@ internal fun vrednostOpcije(argumenti: List<String>, ime: String): String? {
     val i = argumenti.indexOf(ime)
     return if (i >= 0) argumenti.getOrNull(i + 1) ?: prekini("Opcija $ime traži vrednost") else null
 }
+
+/** Sve vrednosti opcije koja može da se navede više puta, npr. `--stavka A --stavka B`. */
+internal fun vrednostiOpcije(argumenti: List<String>, ime: String): List<String> =
+    argumenti.indices.filter { argumenti[it] == ime }.map { i ->
+        argumenti.getOrNull(i + 1)?.takeUnless { it.startsWith("--") } ?: prekini("Opcija $ime traži vrednost")
+    }
