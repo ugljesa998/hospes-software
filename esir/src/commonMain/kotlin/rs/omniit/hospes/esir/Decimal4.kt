@@ -40,6 +40,19 @@ value class Decimal4 private constructor(val unscaled: Long) : Comparable<Decima
         return if (decimale.isEmpty()) "$znak$celi" else "$znak$celi.$decimale"
     }
 
+    /**
+     * Zapis za štampu na računu: dve decimale (polovina se zaokružuje naviše), tačka za hiljade,
+     * zarez za decimale, kao u tekstu računa koji vraća PFR. Primer: `1.500,00`, `136,36`.
+     */
+    fun zaStampu(): String {
+        val negativan = unscaled < 0
+        val apsolutna = if (negativan) -unscaled else unscaled
+        val centi = (apsolutna + 50) / 100
+        val celi = (centi / 100).toString().reversed().chunked(3).joinToString(".").reversed()
+        val decimale = (centi % 100).toString().padStart(2, '0')
+        return (if (negativan && centi != 0L) "-" else "") + "$celi,$decimale"
+    }
+
     companion object {
         const val SKALA = 4
         private const val FAKTOR = 10_000L

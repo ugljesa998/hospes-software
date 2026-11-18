@@ -34,6 +34,15 @@ Gradle ne treba instalirati: `./gradlew` sam preuzima odgovarajuću verziju.
 ./gradlew -q :esir-cli:run --args="kopija <PFR broj računa>"                      # kopija računa vrste Promet
 ./gradlew -q :esir-cli:run --args="refundacija <PFR broj računa> --kupac 20:123456789"   # refundacija uz ID kupca
 ./gradlew -q :esir-cli:run --args="lista"    # računi sačuvani u racuni/
+```
+
+Avansni tok (PURS uputstvo, poglavlje 9.1):
+
+```bash
+./gradlew -q :esir-cli:run --args="avans --iznos 1000 --kupac 10:123456789 --placanje prenos"   # prvi avans
+./gradlew -q :esir-cli:run --args="avans --iznos 500 --prethodni <broj prvog> --placanje gotovina"   # sledeći avans
+./gradlew -q :esir-cli:run --args="zatvori-avans <broj poslednjeg avansa>"      # Avans Refundacija, ne daje se kupcu
+./gradlew -q :esir-cli:run --args="konacni-racun <broj AR> --iznos 2500 --naziv 'Najam vozila' --placanje kartica"
 ./gradlew -q :esir-cli:run --args="provera <RequestId>"   # da li je poslednji račun sa tim RequestId izdat
 ```
 

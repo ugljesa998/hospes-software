@@ -40,6 +40,16 @@ class Decimal4Test {
     }
 
     @Test
+    fun zapisZaStampu() {
+        assertEquals("1.500,00", Decimal4.parse("1500").zaStampu())
+        assertEquals("136,36", Decimal4.parse("136.3636").zaStampu())
+        assertEquals("0,01", Decimal4.parse("0.005").zaStampu(), "polovina se zaokružuje naviše")
+        assertEquals("3.500.000,00", Decimal4.parse("3500000").zaStampu())
+        assertEquals("-27,27", Decimal4.parse("-27.2727").zaStampu())
+        assertEquals("0,00", Decimal4.NULA.zaStampu())
+    }
+
+    @Test
     fun poredjenje() {
         assertTrue(Decimal4.parse("10") > Decimal4.parse("9.9999"))
         assertEquals(Decimal4.parse("10"), Decimal4.parse("10.0000"))

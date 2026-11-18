@@ -24,7 +24,7 @@ import java.io.File
 import java.util.Base64
 
 /** Folder u koji se čuvaju izdati računi (zahtev + odgovor, tekst, QR kod). Nije u Git-u. */
-private val folderRacuna = File("racuni")
+internal val folderRacuna = File("racuni")
 
 /**
  * `racun [--vrsta obuka|promet|predracun] [--placanje gotovina] [--oznaka A]`:
@@ -83,7 +83,7 @@ internal suspend fun komandaIzPredracuna(argumenti: List<String>) {
     }
 }
 
-private fun nacinPlacanja(argumenti: List<String>): NacinPlacanja? =
+internal fun nacinPlacanja(argumenti: List<String>): NacinPlacanja? =
     when (val p = vrednostOpcije(argumenti, "--placanje")) {
         null -> null
         "gotovina" -> NacinPlacanja.GOTOVINA
@@ -174,7 +174,7 @@ internal suspend fun komandaProvera(argumenti: List<String>) {
 }
 
 /** Učita podešavanja, otvori vezu, proveri status i PIN, pa izvrši [blok]. */
-private suspend fun saLpfrom(blok: suspend (LpfrVeza, StatusOdgovor) -> Unit) {
+internal suspend fun saLpfrom(blok: suspend (LpfrVeza, StatusOdgovor) -> Unit) {
     val podesavanja = ucitajLpfrPodesavanja()
     println("L-PFR: ${bezbedanPrikazAdrese(podesavanja.baseUrl)} (token iz adrese se ne ispisuje)")
     println()
@@ -193,7 +193,18 @@ private suspend fun saLpfrom(blok: suspend (LpfrVeza, StatusOdgovor) -> Unit) {
     }
 }
 
-private suspend fun izdajIPrikazi(veza: LpfrVeza, status: StatusOdgovor, zahtev: ZahtevZaRacun, opis: String) {
+/**
+ * Izdaje račun, ispisuje ga i čuva u `racuni/`. Vraća izdat račun; na grešku prekida program.
+ *
+ * @param dodatak redovi koje ESIR štampa ispod teksta PFR-a, a koji se ne šalju PFR-u (npr. kod avansa).
+ */
+internal suspend fun izdajIPrikazi(
+    veza: LpfrVeza,
+    status: StatusOdgovor,
+    zahtev: ZahtevZaRacun,
+    opis: String,
+    dodatak: List<String> = emptyList(),
+): IzdatRacun {
     val jezik = LpfrVeza.JEZIK_SRPSKI_CIRILICA.takeIf { it in status.supportedLanguages }
         ?: status.supportedLanguages.firstOrNull()
     val requestId = noviRequestId()
@@ -211,7 +222,12 @@ private suspend fun izdajIPrikazi(veza: LpfrVeza, status: StatusOdgovor, zahtev:
             println("RAČUN JE IZDAT.")
             val izdat = IzdatRacun(requestId, zahtev, rezultat.racun)
             ispisiRacun(izdat.racun)
-            sacuvaj(izdat)
+            if (dodatak.isNotEmpty()) {
+                println(NASLOV_DODATKA)
+                dodatak.forEach(::println)
+            }
+            sacuvaj(izdat, dodatak)
+            return izdat
         }
         is RezultatRacuna.Odbijen -> {
             val opisGreske = rezultat.greska?.let { g ->
@@ -252,19 +268,31 @@ private fun ispisiRacun(racun: FiskalizovanRacun) {
     println(racun.journal ?: "(L-PFR nije vratio tekst računa)")
 }
 
+private const val NASLOV_DODATKA = "---- ESIR dodaje na odštampan račun (ne šalje se PFR-u) ----"
+
 private fun imeFajla(brojRacuna: String) = brojRacuna.replace(Regex("[^A-Za-z0-9-]"), "_")
 
-private fun sacuvaj(izdat: IzdatRacun) {
+private fun sacuvaj(izdat: IzdatRacun, dodatak: List<String>) {
     folderRacuna.mkdirs()
     val ime = imeFajla(izdat.racun.invoiceNumber)
     File(folderRacuna, "$ime.json").writeText(EsirHttp.json.encodeToString(IzdatRacun.serializer(), izdat))
-    izdat.racun.journal?.let { File(folderRacuna, "$ime.txt").writeText(it) }
+    izdat.racun.journal?.let { tekst ->
+        val ceo = if (dodatak.isEmpty()) tekst else tekst + "\n" + NASLOV_DODATKA + "\n" + dodatak.joinToString("\n") + "\n"
+        File(folderRacuna, "$ime.txt").writeText(ceo)
+    }
     izdat.racun.verificationQRCode?.let { File(folderRacuna, "$ime.gif").writeBytes(Base64.getDecoder().decode(it)) }
     println()
     println("Sačuvano u ${folderRacuna.path}/: $ime.json (zahtev i odgovor), $ime.txt (tekst), $ime.gif (QR kod)")
 }
 
-private fun ucitajIzdat(brojRacuna: String): IzdatRacun {
+/** Sačuvan račun po PFR broju, ili `null` ako ga nema ili je sačuvan starijom verzijom. */
+internal fun nadjiSacuvan(brojRacuna: String): IzdatRacun? {
+    val fajl = File(folderRacuna, "${imeFajla(brojRacuna)}.json")
+    if (!fajl.exists()) return null
+    return runCatching { EsirHttp.json.decodeFromString(IzdatRacun.serializer(), fajl.readText()) }.getOrNull()
+}
+
+internal fun ucitajIzdat(brojRacuna: String): IzdatRacun {
     val fajl = File(folderRacuna, "${imeFajla(brojRacuna)}.json")
     if (!fajl.exists()) prekini("Nema sačuvanog računa $brojRacuna u ${folderRacuna.path}/. Spisak: komanda lista")
     return runCatching { EsirHttp.json.decodeFromString(IzdatRacun.serializer(), fajl.readText()) }.getOrElse {
@@ -275,7 +303,7 @@ private fun ucitajIzdat(brojRacuna: String): IzdatRacun {
     }
 }
 
-private fun vrednostOpcije(argumenti: List<String>, ime: String): String? {
+internal fun vrednostOpcije(argumenti: List<String>, ime: String): String? {
     val i = argumenti.indexOf(ime)
     return if (i >= 0) argumenti.getOrNull(i + 1) ?: prekini("Opcija $ime traži vrednost") else null
 }

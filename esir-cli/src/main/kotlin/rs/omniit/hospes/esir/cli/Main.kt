@@ -30,6 +30,9 @@ fun main(args: Array<String>) {
         "refundacija" -> runBlocking { komandaRefundacija(args.toList()) }
         "kopija" -> runBlocking { komandaKopija(args.toList()) }
         "iz-predracuna" -> runBlocking { komandaIzPredracuna(args.toList()) }
+        "avans" -> runBlocking { komandaAvans(args.toList()) }
+        "zatvori-avans" -> runBlocking { komandaZatvoriAvans(args.toList()) }
+        "konacni-racun" -> runBlocking { komandaKonacniRacun(args.toList()) }
         "lista" -> komandaLista()
         "provera" -> runBlocking { komandaProvera(args.toList()) }
         else -> {
@@ -54,8 +57,14 @@ private fun ispisiPomoc() {
           kopija <broj>                       kopija računa vrste Promet
           iz-predracuna <broj> [--placanje kartica]
                                               Promet Prodaja uz poziv na predračun
+          avans --iznos 1000 [--kupac 10:123] [--prethodni <broj>] [--placanje prenos] [--oznaka A] [--sifra 11]
+                                              Avans Prodaja; sledeći avans se poziva na prethodni
+          zatvori-avans <broj poslednjeg avansa> [--kupac 10:123]
+                                              Avans Refundacija za zbir svih avansa (ne daje se kupcu)
+          konacni-racun <broj AR> --iznos 2500 [--naziv "..."] [--placanje kartica]
+                                              Promet Prodaja posle avansa; PFR-u ide samo ostatak
           (načini plaćanja: gotovina, kartica, cek, prenos, vaucer, instant, drugo)
-          lista                               računi sačuvani u folderu racuni/
+          lista                              računi sačuvani u folderu racuni/
           provera <RequestId>                 da li je poslednji račun sa tim RequestId izdat
         """.trimIndent()
     )
