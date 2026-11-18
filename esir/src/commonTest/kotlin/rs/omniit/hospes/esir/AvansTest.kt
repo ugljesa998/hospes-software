@@ -3,7 +3,9 @@ package rs.omniit.hospes.esir
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 /** Avansni tok, po primeru iz PURS uputstva 9.1 (stan + parking mesto). */
 class AvansTest {
@@ -137,5 +139,52 @@ class AvansTest {
         assertEquals(SifraAvansa.OPSTA_STOPA, SifraAvansa.zaKod(10))
         assertEquals(SifraAvansa.VAN_SISTEMA_PDV, SifraAvansa.zaKod(13))
         assertNull(SifraAvansa.zaKod(14))
+    }
+
+    @Test
+    fun sifraPoStopi() {
+        assertEquals(SifraAvansa.OPSTA_STOPA, SifraAvansa.zaStopu(d("20")))
+        assertEquals(SifraAvansa.POSEBNA_STOPA, SifraAvansa.zaStopu(d("10")))
+        assertEquals(SifraAvansa.OSLOBODJEN_PDV, SifraAvansa.zaStopu(d("0")))
+        assertNull(SifraAvansa.zaStopu(d("19")))
+    }
+
+    @Test
+    fun avansniPosaoIzZurnala() {
+        val zurnal = ZurnalUMemoriji()
+        zurnal.sacuvaj(ap1)
+        zurnal.sacuvaj(ap2)
+        for (polazni in listOf(ap1, ap2)) {
+            val p = assertNotNull(zurnal.avansniPosao(polazni))
+            assertEquals(listOf("M97W88P4-M97W88P4-60", "M97W88P4-M97W88P4-90"), p.lanac.map { it.racun.invoiceNumber })
+            assertEquals("3500000", p.ukupno.toString())
+            assertTrue(p.mozeSledeciAvans && p.mozeKonacni && !p.ponisten)
+        }
+
+        val ar = izdat(Avans.zahtevZaZatvaranje(listOf(ap1, ap2)), "M97W88P4-M97W88P4-120", "2022-03-16T10:00:00+01:00")
+        zurnal.sacuvaj(ar)
+        val zatvoren = assertNotNull(zurnal.avansniPosao(ar), "posao se nalazi i preko Avans Refundacije")
+        assertEquals(ar, zatvoren.zatvaranje)
+        assertTrue(!zatvoren.mozeSledeciAvans && zatvoren.mozeKonacni, "zatvoren, konačni još nije izdat")
+
+        val konacni = izdat(
+            Avans.konacniRacun(ar, listOf(Stavka("Стан", d("1"), d("4000000"), d("4000000"), listOf("Е"))), prenos).zahtev,
+            "M97W88P4-M97W88P4-121", "2022-03-16T10:01:00+01:00",
+        )
+        zurnal.sacuvaj(konacni)
+        assertTrue(!assertNotNull(zurnal.avansniPosao(ap1)).mozeKonacni)
+        assertNull(zurnal.avansniPosao(konacni), "Promet nije avans")
+    }
+
+    @Test
+    fun ponistenAvans() {
+        val zurnal = ZurnalUMemoriji()
+        val ap = ap1.copy(racun = ap1.racun.copy(tin = "RS111111111"))
+        zurnal.sacuvaj(ap)
+        zurnal.sacuvaj(izdat(ap.zahtevZaPonistavanje(), "M97W88P4-M97W88P4-61", "2022-01-16T10:30:00+01:00").let {
+            it.copy(racun = it.racun.copy(tin = "RS111111111"))
+        })
+        val p = assertNotNull(zurnal.avansniPosao(ap))
+        assertTrue(p.ponisten && !p.mozeKonacni && !p.mozeSledeciAvans)
     }
 }

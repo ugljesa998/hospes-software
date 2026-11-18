@@ -44,8 +44,17 @@ object SifarnikKupca {
 
     private val FORMAT = Regex("""(\d{2}):(.+)""")
 
-    /** Problem sa ID-om kupca, ili `null` ako je ispravan. */
-    fun proveriIdKupca(vrednost: String): String? = proveri(vrednost, idKupca, "ID kupca", maksDuzina = 20)
+    /** Problem sa ID-om kupca, ili `null` ako je ispravan. PIB mora imati 9 cifara, JMBG 13. */
+    fun proveriIdKupca(vrednost: String): String? {
+        proveri(vrednost, idKupca, "ID kupca", maksDuzina = 20)?.let { return it }
+        val (sifra, broj) = vrednost.split(":", limit = 2)
+        return when (sifra) {
+            "10", "14" -> if (Regex("""\d{9}""").matches(broj)) null else "PIB ima tačno 9 cifara"
+            "11", "15" -> if (Regex("""\d{13}""").matches(broj)) null else "JMBG ima tačno 13 cifara"
+            "12" -> if (Regex("""\d{9}:\d{5}""").matches(broj)) null else "Za šifru 12 upiši PIB:JBKJS (9 cifara : 5 cifara)"
+            else -> null
+        }
+    }
 
     /** Problem sa opcionim poljem kupca, ili `null` ako je ispravno. */
     fun proveriOpcionoPolje(vrednost: String): String? =

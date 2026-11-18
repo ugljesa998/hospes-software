@@ -60,7 +60,10 @@ object Otisak {
             }
             if (kraj == redovi.size && qr != null) add(DeoOtiska.QrKod(qr))
             if (dodatak.isNotEmpty()) add(DeoOtiska.Red("")) // razmak, npr. za potpis kupca
-            dodatak.forEach { add(DeoOtiska.Red(it.trimEnd())) }
+            // Redovi ESIR-a duži od 40 znakova se prelamaju, da se zbog njih ne bi smanjila slova celog računa.
+            dodatak.map { it.trimEnd() }.forEach { red ->
+                if (red.length <= KOLONA) add(DeoOtiska.Red(red)) else prelomi(red, KOLONA).forEach { add(DeoOtiska.Red(it)) }
+            }
         }
     }
 

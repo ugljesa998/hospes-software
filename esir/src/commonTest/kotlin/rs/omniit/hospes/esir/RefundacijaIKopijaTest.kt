@@ -198,4 +198,14 @@ class RefundacijaIKopijaTest {
         zurnal.sacuvaj(izdat(predracun.zahtevZaPrometIzPredracuna(), "X-Y-5"))
         assertEquals("X-Y-5", zurnal.prometIzPredracuna("X-Y-4")?.racun?.invoiceNumber)
     }
+
+    @Test
+    fun pibIJmbgKupca() {
+        assertEquals("PIB ima tačno 9 cifara", SifarnikKupca.proveriIdKupca("10:888877"))
+        assertNull(SifarnikKupca.proveriIdKupca("10:115423827"))
+        assertEquals("JMBG ima tačno 13 cifara", SifarnikKupca.proveriIdKupca("11:123"))
+        assertNull(SifarnikKupca.proveriIdKupca("11:0101990710011"))
+        assertNull(SifarnikKupca.proveriIdKupca("12:115423827:12345"))
+        assertNull(SifarnikKupca.proveriIdKupca("20:123"), "lična karta: bez provere dužine")
+    }
 }

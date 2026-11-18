@@ -69,6 +69,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import rs.omniit.hospes.esir.Artikal
+import rs.omniit.hospes.esir.AvansniPosao
+import rs.omniit.hospes.esir.SifraAvansa
 import rs.omniit.hospes.esir.Decimal4
 import rs.omniit.hospes.esir.Esir
 import rs.omniit.hospes.esir.IzdatRacun
@@ -80,6 +82,7 @@ import rs.omniit.hospes.esir.VrstaPfra
 import rs.omniit.hospes.esir.VrstaRacuna
 import rs.omniit.hospes.esir.naziv
 import rs.omniit.hospes.esir.pretrazi
+import rs.omniit.hospes.esir.datum
 import rs.omniit.hospes.esir.mozePonistavanje
 import rs.omniit.hospes.esir.ukupno
 
@@ -169,46 +172,84 @@ private fun PfrKartica(m: EsirModel) {
 
 @Composable
 private fun RacunKartica(m: EsirModel) {
+    val konacni = m.konacniPosao
+    val avans = konacni == null && m.vrstaRacuna == VrstaRacuna.AVANS
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Račun", fontWeight = FontWeight.SemiBold)
-                if (m.posebanSlucaj == PosebanSlucaj.NE) {
-                    Izbor(listOf(VrstaRacuna.OBUKA, VrstaRacuna.PROMET, VrstaRacuna.PREDRACUN), m.vrstaRacuna, { "${it.naziv} Prodaja" }) {
-                        m.vrstaRacuna = it
+                if (konacni != null) {
+                    Text("Konačni račun posle avansa", fontWeight = FontWeight.Medium)
+                    Spacer(Modifier.weight(1f))
+                    TextButton(onClick = m::otkaziKonacni) { Text("Otkaži") }
+                } else if (m.posebanSlucaj == PosebanSlucaj.NE) {
+                    Row(Modifier.horizontalScroll(rememberScrollState())) {
+                        Izbor(
+                            listOf(VrstaRacuna.OBUKA, VrstaRacuna.PROMET, VrstaRacuna.PREDRACUN, VrstaRacuna.AVANS),
+                            m.vrstaRacuna,
+                            { it.naziv },
+                        ) { m.vrstaRacuna = it }
                     }
                 } else {
                     Text("Promet Prodaja · ${m.posebanSlucaj.naziv.lowercase()}", fontWeight = FontWeight.Medium)
                 }
             }
 
-            var unos by remember { mutableStateOf(NacinUnosa.KATALOG) }
-            Izbor(NacinUnosa.entries, unos, { it.naziv }, kompaktno = true) { unos = it }
-            when (unos) {
-                NacinUnosa.KATALOG -> IzKataloga(m)
-                NacinUnosa.RUCNO -> UnosStavke(m)
-                NacinUnosa.VAUCER -> UnosVaucera(m)
+            if (konacni != null) {
+                Text(
+                    "Dodaj sve što se prodaje, po punoj ceni (npr. najam vozila za ceo period). " +
+                        "Avansi (${konacni.poslednji.racun.invoiceNumber} i ranije): ${konacni.ukupno.zaStampu()} RSD se oduzimaju, kupac plaća samo ostatak.",
+                    color = Color.DarkGray,
+                    fontSize = 12.sp,
+                )
             }
 
-            if (m.stavke.isEmpty()) {
-                Text("Nema stavki", color = Color.Gray)
+            val zaNaplatu = if (avans) {
+                UnosAvansa(m)
+                runCatching { Decimal4.parse(m.avansIznos.trim().replace(',', '.')) }.getOrNull() ?: Decimal4.NULA
             } else {
-                m.stavke.forEachIndexed { i, s ->
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("${s.name} (${s.labels.joinToString()})", Modifier.weight(1f))
-                        Text("${s.quantity.toString().replace('.', ',')} × ${s.unitPrice.zaStampu()}", Modifier.width(150.dp), color = Color.DarkGray)
-                        Text(s.totalAmount.zaStampu(), Modifier.width(100.dp), fontWeight = FontWeight.Medium)
-                        TextButton(onClick = { m.ukloniStavku(i) }) { Text("Ukloni") }
+                var unos by remember { mutableStateOf(NacinUnosa.KATALOG) }
+                Izbor(NacinUnosa.entries, unos, { it.naziv }, kompaktno = true) { unos = it }
+                when (unos) {
+                    NacinUnosa.KATALOG -> IzKataloga(m)
+                    NacinUnosa.RUCNO -> UnosStavke(m)
+                    NacinUnosa.VAUCER -> UnosVaucera(m)
+                }
+
+                if (m.stavke.isEmpty()) {
+                    Text("Nema stavki", color = Color.Gray)
+                } else {
+                    m.stavke.forEachIndexed { i, s ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("${s.name} (${s.labels.joinToString()})", Modifier.weight(1f))
+                            Text("${s.quantity.toString().replace('.', ',')} × ${s.unitPrice.zaStampu()}", Modifier.width(150.dp), color = Color.DarkGray)
+                            Text(s.totalAmount.zaStampu(), Modifier.width(100.dp), fontWeight = FontWeight.Medium)
+                            TextButton(onClick = { m.ukloniStavku(i) }) { Text("Ukloni") }
+                        }
                     }
                 }
+                m.ukupno
             }
             HorizontalDivider()
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Ukupno", Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
-                Text("${m.ukupno.zaStampu()} RSD", style = MaterialTheme.typography.titleLarge)
+                Text(if (avans) "Avans" else "Ukupno", Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
+                Text("${zaNaplatu.zaStampu()} RSD", style = MaterialTheme.typography.titleLarge)
+            }
+            val ostatak = m.ostatakPosleAvansa
+            if (konacni != null && ostatak != null) {
+                Row {
+                    Text("Plaćeno avansom", Modifier.weight(1f))
+                    Text("− ${konacni.ukupno.zaStampu()} RSD")
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Ostatak za plaćanje", Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
+                    val premalo = ostatak < Decimal4.NULA && m.stavke.isNotEmpty()
+                    Text("${ostatak.zaStampu()} RSD", style = MaterialTheme.typography.titleLarge, color = if (premalo) CRVENA else Color.Unspecified)
+                }
+                if (ostatak < Decimal4.NULA && m.stavke.isNotEmpty()) Text("Avansi su veći od računa: dodaj stavke (delimična realizacija avansa još nije podržana).", color = CRVENA, fontSize = 12.sp)
             }
 
-            PosebanSlucajRacuna(m)
+            if (!avans && konacni == null) PosebanSlucajRacuna(m)
 
             if (m.posebanSlucaj == PosebanSlucaj.NE) {
                 Text("Plaćanje", fontWeight = FontWeight.SemiBold)
@@ -220,23 +261,94 @@ private fun RacunKartica(m: EsirModel) {
                 if (m.nacinPlacanja == NacinPlacanja.GOTOVINA) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         OutlinedTextField(m.primljeno, { m.primljeno = it }, label = { Text("Kupac dao") }, singleLine = true, modifier = Modifier.width(160.dp))
-                        m.kusur?.let { Text("Kusur: ${it.zaStampu()} RSD", style = MaterialTheme.typography.titleMedium) }
+                        m.kusurZa(ostatak ?: zaNaplatu, m.primljeno)?.let { Text("Kusur: ${it.zaStampu()} RSD", style = MaterialTheme.typography.titleMedium) }
                     }
                 }
             }
 
-            if (m.posebanSlucaj != PosebanSlucaj.KORPORATIVNA) KupacNaRacunu(m)
+            val kupacSaAvansa = m.kupacSaAvansa
+            when {
+                konacni != null && kupacSaAvansa != null -> Text("Kupac: $kupacSaAvansa (sa avansa)", fontSize = 13.sp)
+                konacni != null -> {
+                    Text("Kupac je obavezan (nema ga na avansu): unesi ga ovde.", color = CRVENA, fontSize = 12.sp)
+                    KupacNaRacunu(m, otvoriOdmah = true)
+                }
+                m.posebanSlucaj != PosebanSlucaj.KORPORATIVNA -> KupacNaRacunu(m)
+            }
 
             Text("Štampa: virtuelni štampač, papir ${m.papir.naziv} (Podešavanja)", color = Color.Gray, fontSize = 12.sp)
 
             Button(
                 onClick = m::izdaj,
-                enabled = !m.radi && m.stavke.isNotEmpty() && m.status != null,
+                enabled = !m.radi && m.status != null && (if (avans) m.avansIznos.isNotBlank() else m.stavke.isNotEmpty()),
                 modifier = Modifier.fillMaxWidth().height(48.dp),
-            ) { Text("Izdaj račun", fontSize = 16.sp) }
+            ) {
+                Text(
+                    when {
+                        konacni != null && konacni.zatvaranje == null -> "Zatvori avanse i izdaj konačni račun"
+                        konacni != null -> "Izdaj konačni račun"
+                        avans -> "Izdaj avans"
+                        else -> "Izdaj račun"
+                    },
+                    fontSize = 16.sp,
+                )
+            }
+            if (konacni != null) {
+                Text(
+                    if (konacni.zatvaranje == null) {
+                        "Izdaju se dva računa: Avans Refundacija (zatvara avanse, ostaje u radnji) i Promet Prodaja za kupca."
+                    } else {
+                        "Avansi su već zatvoreni (${konacni.zatvaranje?.racun?.invoiceNumber}); izdaje se Promet Prodaja za kupca."
+                    },
+                    color = Color.DarkGray,
+                    fontSize = 12.sp,
+                )
+            }
 
             m.poruka?.let { Text(it.tekst, color = if (it.greska) CRVENA else ZELENA) }
         }
+    }
+}
+
+/**
+ * Uplata avansa (PURS 9.1): iznos, poreska oznaka i šifra avansa (sama se bira po stopi), datum uplate kada je
+ * novac stigao ranije (9.2). Sledeći avans istog posla se započinje iz žurnala („Sledeći avans“).
+ */
+@Composable
+private fun UnosAvansa(m: EsirModel) {
+    val oznake = m.stope.map { it.label }
+    if (m.avansOznaka == null || m.avansOznaka !in oznake) m.avansOznaka = oznake.firstOrNull()
+    val sifra = m.sifraAvansa()
+
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        val prethodni = m.prethodniAvans
+        if (prethodni == null) {
+            Text("Prvi avans novog posla. Sledeći avans istog posla: u žurnalu izaberi avans, pa „Sledeći avans“.", color = Color.Gray, fontSize = 12.sp)
+        } else {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Sledeći avans, poziva se na ${prethodni.racun.invoiceNumber}", Modifier.weight(1f), fontWeight = FontWeight.Medium, fontSize = 13.sp)
+                TextButton(onClick = m::noviAvansniPosao) { Text("Novi posao") }
+            }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(m.avansIznos, { m.avansIznos = it }, label = { Text("Iznos avansa") }, singleLine = true, modifier = Modifier.width(160.dp))
+            Text("Oznaka:", fontSize = 13.sp)
+            Row(Modifier.weight(1f).horizontalScroll(rememberScrollState())) {
+                Izbor(oznake, m.avansOznaka, { it }, kompaktno = true) { m.avansOznaka = it; m.avansSifra = null }
+            }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("Šifra:", fontSize = 13.sp)
+            Izbor(SifraAvansa.entries, sifra, { it.kod.toString() }, kompaktno = true) { m.avansSifra = it }
+            Text(sifra?.opis ?: "izaberi šifru za ovu stopu", color = if (sifra == null) CRVENA else Color.DarkGray, fontSize = 12.sp)
+        }
+        OutlinedTextField(
+            m.avansDatumUplate,
+            { m.avansDatumUplate = it },
+            label = { Text("Datum uplate (gggg-mm-dd), samo ako je novac stigao pre današnjeg dana") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
     }
 }
 
@@ -568,6 +680,48 @@ private fun KarticaVpfr(m: EsirModel) {
     }
 }
 
+/** Avansni posao: svi avansi, zbir, stanje, i radnje „Sledeći avans“ i „Konačni račun“ (konačni se pravi levo). */
+@Composable
+private fun AvansniPosaoPanel(m: EsirModel, posao: AvansniPosao) {
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("Avansni posao", fontWeight = FontWeight.SemiBold)
+            posao.lanac.forEach { a ->
+                Row {
+                    Text("${a.racun.invoiceNumber} · ${a.datum ?: ""}", Modifier.weight(1f), fontSize = 13.sp, fontFamily = FontFamily.Monospace)
+                    Text("${a.ukupno.zaStampu()} RSD", fontSize = 13.sp)
+                }
+            }
+            Row {
+                Text("Ukupno avansa", Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
+                Text("${posao.ukupno.zaStampu()} RSD", fontWeight = FontWeight.SemiBold)
+            }
+            val zatvaranje = posao.zatvaranje
+            val praviSeLevo = m.konacniPosao?.poslednji?.racun?.invoiceNumber == posao.poslednji.racun.invoiceNumber
+            when {
+                posao.ponisten -> Text("Poništen računom ${zatvaranje?.racun?.invoiceNumber} (9.3).", color = Color.Gray, fontSize = 13.sp)
+                posao.konacni != null -> Text(
+                    "Zatvoren računom ${zatvaranje?.racun?.invoiceNumber}; konačni račun ${posao.konacni?.racun?.invoiceNumber}.",
+                    color = ZELENA,
+                    fontSize = 13.sp,
+                )
+                praviSeLevo -> Text("← Konačni račun se pravi levo: dodaj stavke, pa „Zatvori avanse i izdaj konačni račun“.", color = ZELENA, fontSize = 13.sp)
+                else -> {
+                    if (zatvaranje != null) {
+                        Text("Avansi su zatvoreni računom ${zatvaranje.racun.invoiceNumber}, a konačni račun još nije izdat.", color = CRVENA, fontSize = 13.sp)
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (posao.mozeSledeciAvans) {
+                            OutlinedButton(onClick = { m.zapocniSledeciAvans(posao) }, enabled = !m.radi) { Text("Sledeći avans") }
+                        }
+                        Button(onClick = { m.zapocniKonacni(posao) }, enabled = !m.radi) { Text("Konačni račun") }
+                    }
+                }
+            }
+        }
+    }
+}
+
 private enum class NacinUnosa(val naziv: String) { KATALOG("Iz kataloga"), RUCNO("Ručni unos"), VAUCER("Vaučer") }
 
 /**
@@ -694,8 +848,8 @@ private fun UnosKupca(sifra: String, broj: String, oznakaBroja: String, naSifru:
 
 /** Kupac na računu koji se izdaje („na firmu“: PIB); bez broja račun nema kupca. */
 @Composable
-private fun KupacNaRacunu(m: EsirModel) {
-    var otvoren by remember { mutableStateOf(false) }
+private fun KupacNaRacunu(m: EsirModel, otvoriOdmah: Boolean = false) {
+    var otvoren by remember(otvoriOdmah) { mutableStateOf(otvoriOdmah) }
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         TextButton(onClick = { otvoren = !otvoren }) { Text(if (otvoren) "Kupac ▲" else "Kupac (na firmu, PIB…) ▼") }
         if (m.brojKupca.isNotBlank()) {
@@ -727,12 +881,17 @@ private fun RadnjeRacuna(m: EsirModel, izdat: IzdatRacun) {
     val refundacije = remember(broj, m.zurnal) { if (izdat.mozeRefundacija) m.refundacijeZa(izdat) else emptyList() }
     val preostalo = remember(broj, m.zurnal) { if (izdat.mozeRefundacija) m.preostaloZaRefundaciju(izdat) else emptyList() }
     val zbirna = remember(broj, m.zurnal) { m.zbirnaRefundacijaZa(izdat) }
-    val imaZaRefundaciju = zbirna == null && preostalo.any { it > Decimal4.NULA }
+    val konacniPosleAvansa = remember(broj, m.zurnal) { m.jeKonacniPosleAvansa(izdat) }
+    val imaZaRefundaciju = zbirna == null && !konacniPosleAvansa && preostalo.any { it > Decimal4.NULA }
     val predracun = izdat.zahtev.invoiceType == VrstaRacuna.PREDRACUN && izdat.zahtev.transactionType == TipTransakcije.PRODAJA
     val naplacen = remember(broj, m.zurnal) { if (predracun) m.prometIzPredracuna(izdat) else null }
     val mozeSlati = !m.radi && m.status != null
     var potvrdaPonistavanja by remember(broj) { mutableStateOf(false) }
-    if (!izdat.mozeRefundacija && !izdat.mozeKopija && !predracun && !izdat.mozePonistavanje) return
+    val posaoAvansa = remember(broj, m.zurnal) { m.avansniPosao(izdat) }
+    // Avans se poništava samo dok je poslednji u poslu koji nije zatvoren.
+    val mozePonistiti = izdat.mozePonistavanje && !konacniPosleAvansa &&
+        (posaoAvansa == null || (posaoAvansa.mozeSledeciAvans && posaoAvansa.poslednji.racun.invoiceNumber == broj))
+    if (!izdat.mozeRefundacija && !izdat.mozeKopija && !predracun && !mozePonistiti && posaoAvansa == null) return
 
     fun prebaci(p: PanelRacuna) {
         panel = if (panel == p) null else p
@@ -764,7 +923,7 @@ private fun RadnjeRacuna(m: EsirModel, izdat: IzdatRacun) {
             }
         }
         // 9.3: poništava se samo račun koji još nije refundiran.
-        if (izdat.mozePonistavanje && refundacije.isEmpty() && zbirna == null && !potvrdaKopije) {
+        if (mozePonistiti && refundacije.isEmpty() && zbirna == null && !potvrdaKopije) {
             if (potvrdaPonistavanja) {
                 Text("Poništiti račun?", fontSize = 13.sp)
                 Button(
@@ -798,6 +957,10 @@ private fun RadnjeRacuna(m: EsirModel, izdat: IzdatRacun) {
         )
     }
     if (m.status == null) Text("Za izdavanje PFR mora biti dostupan (Osveži).", color = Color.Gray, fontSize = 12.sp)
+    posaoAvansa?.let {
+        Spacer(Modifier.height(6.dp))
+        AvansniPosaoPanel(m, it)
+    }
     when (panel) {
         PanelRacuna.REFUNDACIJA -> if (imaZaRefundaciju) {
             Spacer(Modifier.height(6.dp))

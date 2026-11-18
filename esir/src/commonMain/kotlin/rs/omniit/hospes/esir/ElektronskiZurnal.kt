@@ -87,6 +87,47 @@ fun ElektronskiZurnal.mesecnaRefundacijaKartica(pibKupca: String, od: String, do
         it.zahtev.buyerCostCenterId == KorporativnaKartica.oznakaPerioda(od, doDana)
 }
 
+/** Avans Prodaja koja se poziva na avans [brojAvansa] (sledeći avans istog posla), ili `null`. */
+fun ElektronskiZurnal.sledeciAvans(brojAvansa: String): IzdatRacun? =
+    svi().firstOrNull { it.jeAvansProdaja() && it.zahtev.referentDocumentNumber == brojAvansa }
+
+/** Avans Refundacija koja se poziva na avans [brojAvansa] (zatvaranje posla ili poništavanje), ili `null`. */
+fun ElektronskiZurnal.zatvaranjeAvansa(brojAvansa: String): IzdatRacun? = svi().firstOrNull {
+    it.zahtev.invoiceType == VrstaRacuna.AVANS &&
+        it.zahtev.transactionType == TipTransakcije.REFUNDACIJA &&
+        it.zahtev.referentDocumentNumber == brojAvansa
+}
+
+/** Konačni račun (Promet Prodaja) koji se poziva na Avans Refundaciju [brojZatvaranja], ili `null`. */
+fun ElektronskiZurnal.konacniRacunZa(brojZatvaranja: String): IzdatRacun? = svi().firstOrNull {
+    it.zahtev.invoiceType == VrstaRacuna.PROMET &&
+        it.zahtev.transactionType == TipTransakcije.PRODAJA &&
+        it.zahtev.referentDocumentNumber == brojZatvaranja
+}
+
+/**
+ * Avansni posao kome pripada [izdat] (bilo koja Avans Prodaja iz lanca ili njegova Avans Refundacija), ili `null`.
+ * Lanac se prati unapred do poslednjeg avansa, pa unazad do prvog.
+ */
+fun ElektronskiZurnal.avansniPosao(izdat: IzdatRacun): AvansniPosao? {
+    val pocetni = when {
+        izdat.jeAvansProdaja() -> izdat
+        izdat.zahtev.invoiceType == VrstaRacuna.AVANS && izdat.zahtev.transactionType == TipTransakcije.REFUNDACIJA ->
+            izdat.zahtev.referentDocumentNumber?.let(::nadji)?.takeIf { it.jeAvansProdaja() } ?: return null
+        else -> return null
+    }
+    var poslednji = pocetni
+    val vidjeni = mutableSetOf(poslednji.racun.invoiceNumber)
+    while (true) {
+        val sledeci = sledeciAvans(poslednji.racun.invoiceNumber) ?: break
+        if (!vidjeni.add(sledeci.racun.invoiceNumber)) break
+        poslednji = sledeci
+    }
+    val lanac = Avans.lanacAvansa(poslednji, ::nadji)
+    val zatvaranje = zatvaranjeAvansa(poslednji.racun.invoiceNumber)
+    return AvansniPosao(lanac, zatvaranje, zatvaranje?.let { konacniRacunZa(it.racun.invoiceNumber) })
+}
+
 /** Promet Prodaja koja je već izdata iz predračuna [brojPredracuna], ili `null` (predračun se naplaćuje jednom). */
 fun ElektronskiZurnal.prometIzPredracuna(brojPredracuna: String): IzdatRacun? = svi().firstOrNull {
     it.zahtev.invoiceType == VrstaRacuna.PROMET &&

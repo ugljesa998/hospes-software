@@ -13,6 +13,17 @@ enum class SifraAvansa(val kod: Int, val opis: String) {
 
     companion object {
         fun zaKod(kod: Int): SifraAvansa? = entries.firstOrNull { it.kod == kod }
+
+        /**
+         * Šifra po poreskoj stopi: 20% → 10, 10% → 11, 0% → 12 (oslobođen PDV). Šifra 13 (van sistema PDV) i
+         * druge stope se biraju ručno. U sandbox-u su stope izmišljene, pa i šifra zavisi od izmišljene stope.
+         */
+        fun zaStopu(stopa: Decimal4): SifraAvansa? = when (stopa.toString()) {
+            "20" -> OPSTA_STOPA
+            "10" -> POSEBNA_STOPA
+            "0" -> OSLOBODJEN_PDV
+            else -> null
+        }
     }
 }
 
@@ -203,6 +214,28 @@ object Avans {
     }
 
     private fun zbir(iznosi: List<Decimal4>): Decimal4 = iznosi.fold(Decimal4.NULA) { a, b -> a + b }
+}
+
+/**
+ * Jedan avansni posao (npr. rezervacija vozila): avansi od prvog do poslednjeg, zatvaranje (Avans Refundacija)
+ * i konačni račun, kako su u žurnalu.
+ */
+data class AvansniPosao(val lanac: List<IzdatRacun>, val zatvaranje: IzdatRacun?, val konacni: IzdatRacun?) {
+    val poslednji: IzdatRacun get() = lanac.last()
+
+    /** Zbir svih avansa (sa porezom). */
+    val ukupno: Decimal4 get() = lanac.flatMap { it.zahtev.items }.fold(Decimal4.NULA) { a, s -> a + s.totalAmount }
+
+    /** Posao je otkazan poništavanjem (9.3): Avans Refundacija na sopstveni PIB prodavca. */
+    val ponisten: Boolean
+        get() = zatvaranje?.let { z ->
+            val pib = z.racun.tin?.filter { it.isDigit() }
+            pib != null && z.zahtev.buyerId == "10:$pib"
+        } == true
+
+    /** Može li se dodati avans ili izdati konačni račun: nije zatvoren, ili je zatvoren a konačni još nije izdat. */
+    val mozeSledeciAvans: Boolean get() = zatvaranje == null
+    val mozeKonacni: Boolean get() = konacni == null && !ponisten
 }
 
 /** Širina teksta računa koji vraća PFR (40 znakova), da bi dodati redovi bili poravnati sa njim. */

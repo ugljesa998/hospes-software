@@ -25,6 +25,9 @@ import rs.omniit.hospes.esir.SirinaPapira
 import rs.omniit.hospes.esir.VrstaPfra
 import rs.omniit.hospes.esir.VrstaRacuna
 import rs.omniit.hospes.esir.ZurnalUMemoriji
+import kotlinx.serialization.json.JsonObject
+import rs.omniit.hospes.esir.Avans
+import rs.omniit.hospes.esir.SifraAvansa
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -600,5 +603,160 @@ class EsirModelTest {
 
         assertEquals("Račun je već refundiran (TEST1234-TEST1234-3); poništavanje nije moguće", m.ponisti(promet))
         assertEquals(listOf("0"), m.preostaloZaRefundaciju(promet).map { it.toString() }, "poništen račun se više ne refundira")
+    }
+
+    private fun JsonObject.iznos(i: Int = 0) = this["payment"]!!.jsonArray[i].jsonObject["amount"].toString()
+    private fun JsonObject.nacin(i: Int = 0) = this["payment"]!!.jsonArray[i].jsonObject["paymentType"]!!.jsonPrimitive.content
+
+    @Test
+    fun avansniPosaoOdPrvogAvansaDoKonacnogRacuna() = runTest {
+        val m = EsirModel(okruzenje, this)
+        m.osvezi()
+        m.poslednjiPosao!!.join()
+        m.vrstaRacuna = VrstaRacuna.AVANS
+        m.izdaj()
+        assertEquals("Unesi iznos avansa", m.poruka?.tekst)
+
+        m.avansIznos = "1000"
+        m.avansOznaka = "A"
+        assertEquals(SifraAvansa.POSEBNA_STOPA, m.sifraAvansa(), "A = 10% → šifra 11")
+        m.nacinPlacanja = NacinPlacanja.PRENOS_NA_RACUN
+        m.sifraKupca = "10"
+        m.brojKupca = "123456789"
+        m.izdaj()
+        m.poslednjiPosao!!.join()
+        val prvi = poslatiRacuni().single()
+        assertEquals("Advance", prvi.tekst("invoiceType"))
+        assertEquals("Sale", prvi.tekst("transactionType"))
+        assertEquals("11: Аванс (A)", prvi["items"]!!.jsonArray.single().jsonObject["name"]!!.jsonPrimitive.content)
+        assertEquals("1000", prvi.iznos())
+        assertEquals("WireTransfer", prvi.nacin())
+        assertEquals("10:123456789", prvi.tekst("buyerId"))
+
+        val ap1 = assertNotNull(okruzenje.zurnal.nadji("TEST1234-TEST1234-1"))
+        m.zapocniSledeciAvans(assertNotNull(m.avansniPosao(ap1)))
+        assertEquals(ap1, m.prethodniAvans)
+        assertEquals("123456789", m.brojKupca, "kupac iz posla")
+        m.avansIznos = "500"
+        m.avansDatumUplate = "2026-11-19"
+        m.izdaj()
+        assertEquals("Datum uplate ne može biti posle današnjeg dana", m.poruka?.tekst)
+        m.avansDatumUplate = "2026-11-10"
+        m.nacinPlacanja = NacinPlacanja.GOTOVINA
+        m.primljeno = "600"
+        m.izdaj()
+        m.poslednjiPosao!!.join()
+        val drugi = poslatiRacuni().last()
+        assertEquals("TEST1234-TEST1234-1", drugi.tekst("referentDocumentNumber"))
+        assertEquals("2026-11-10T00:00:00", drugi.tekst("dateAndTimeOfIssue"), "9.2: ESIR vreme = datum uplate")
+        assertEquals("500", drugi.iznos(), "u kasi ostaje 500, kusur 100")
+        assertNull(m.prethodniAvans)
+
+        val ap2 = assertNotNull(okruzenje.zurnal.nadji("TEST1234-TEST1234-2"))
+        assertEquals("1500", assertNotNull(m.avansniPosao(ap1)).ukupno.toString())
+        assertEquals("Dodaj stavke konačnog računa (levo), po punoj ceni", m.izdajKonacniRacun(ap1, NacinPlacanja.PLATNA_KARTICA))
+        assertNull(m.dodajStavku("Najam vozila /dan", "1", "1000", "A", ""))
+        assertTrue(m.izdajKonacniRacun(ap1, NacinPlacanja.PLATNA_KARTICA)!!.startsWith("Avansi (1.500,00) su veći od računa (1.000,00)"))
+        assertNull(m.dodajStavku("Dodatno osiguranje /dan", "2", "1000", "A", ""))
+
+        assertNull(m.izdajKonacniRacun(ap1, NacinPlacanja.PLATNA_KARTICA))
+        m.poslednjiPosao!!.join()
+        val (zatvaranje, konacni) = poslatiRacuni().takeLast(2)
+        assertEquals("Advance", zatvaranje.tekst("invoiceType"))
+        assertEquals("Refund", zatvaranje.tekst("transactionType"))
+        assertEquals("TEST1234-TEST1234-2", zatvaranje.tekst("referentDocumentNumber"), "poziv na poslednji avans")
+        assertEquals("1500", zatvaranje["items"]!!.jsonArray.single().jsonObject["totalAmount"].toString())
+        assertEquals(listOf("WireTransfer" to "1000", "Cash" to "500"), (0..1).map { zatvaranje.nacin(it) to zatvaranje.iznos(it) })
+        assertEquals("Normal", konacni.tekst("invoiceType"))
+        assertEquals("TEST1234-TEST1234-3", konacni.tekst("referentDocumentNumber"), "konačni se poziva na zatvaranje")
+        assertEquals("1500", konacni.iznos(), "PFR-u ide samo ostatak: 3000 − 1500")
+        assertEquals("Card", konacni.nacin())
+        assertEquals(2, konacni["items"]!!.jsonArray.size)
+        assertTrue(m.stavke.isEmpty())
+
+        assertEquals("TEST1234-TEST1234-4", m.avansniPosao(ap2)?.konacni?.racun?.invoiceNumber)
+        assertEquals("Konačni račun je već izdat: TEST1234-TEST1234-4", m.izdajKonacniRacun(ap1, NacinPlacanja.PLATNA_KARTICA))
+        assertEquals("Poništava se samo poslednji avans posla koji nije zatvoren", m.ponisti(ap2))
+        val konacniRacun = assertNotNull(okruzenje.zurnal.nadji("TEST1234-TEST1234-4"))
+        assertTrue(m.jeKonacniPosleAvansa(konacniRacun))
+        assertEquals("Konačni račun posle avansa se za sada ne refundira iz aplikacije", m.refundiraj(konacniRacun, "20", "1"))
+        assertEquals("Konačni račun posle avansa se za sada ne poništava iz aplikacije", m.ponisti(konacniRacun))
+        assertEquals(4, poslatiRacuni().size, "ništa više nije poslato")
+    }
+
+    @Test
+    fun konacniRacunKadaJeZatvaranjeVecIzdato() = runTest {
+        val m = EsirModel(okruzenje, this)
+        m.osvezi()
+        m.poslednjiPosao!!.join()
+        m.vrstaRacuna = VrstaRacuna.AVANS
+        m.avansIznos = "1000"
+        m.avansOznaka = "A"
+        m.nacinPlacanja = NacinPlacanja.PRENOS_NA_RACUN
+        m.izdaj()
+        m.poslednjiPosao!!.join()
+        val ap = assertNotNull(okruzenje.zurnal.nadji("TEST1234-TEST1234-1"))
+        assertEquals("Unesi kupca (levo, „Kupac“): zatvaranje avansa traži ID kupca", m.run {
+            assertNull(dodajStavku("Najam", "1", "1000", "A", ""))
+            izdajKonacniRacun(ap, NacinPlacanja.GOTOVINA)
+        })
+
+        // Zatvaranje izdato ranije (npr. konačni račun nije prošao): sada se izdaje samo konačni.
+        val ar = rs.omniit.hospes.esir.IzdatRacun(
+            "x",
+            Avans.zahtevZaZatvaranje(listOf(ap), idKupca = "20:1"),
+            rs.omniit.hospes.esir.FiskalizovanRacun("TEST1234-TEST1234-50", "2026-11-18T14:00:00+01:00"),
+        )
+        okruzenje.zurnal.sacuvaj(ar)
+        val posao = assertNotNull(m.avansniPosao(ar))
+        assertTrue(posao.mozeKonacni && !posao.mozeSledeciAvans)
+        assertNull(m.izdajKonacniRacun(ar, NacinPlacanja.GOTOVINA, primljeno = "500"))
+        m.poslednjiPosao!!.join()
+        assertEquals(2, poslatiRacuni().size, "samo konačni račun")
+        val konacni = poslatiRacuni().last()
+        assertEquals("TEST1234-TEST1234-50", konacni.tekst("referentDocumentNumber"))
+        assertEquals("0", konacni.iznos(), "avans pokriva ceo račun: plaćanje 0")
+    }
+
+    @Test
+    fun konacniRacunSeIzdajeLevoJednimDugmetom() = runTest {
+        val m = EsirModel(okruzenje, this)
+        m.osvezi()
+        m.poslednjiPosao!!.join()
+        m.vrstaRacuna = VrstaRacuna.AVANS
+        m.avansIznos = "500"
+        m.avansOznaka = "A"
+        m.avansDatumUplate = "2026-11-18" // danas: ESIR vreme se ne šalje
+        m.nacinPlacanja = NacinPlacanja.GOTOVINA
+        m.izdaj()
+        m.poslednjiPosao!!.join()
+        val ap = assertNotNull(okruzenje.zurnal.nadji("TEST1234-TEST1234-1"))
+
+        m.zapocniKonacni(assertNotNull(m.avansniPosao(ap)))
+        assertEquals(VrstaRacuna.PROMET, m.vrstaRacuna)
+        assertNull(m.kupacSaAvansa, "avans je bez kupca")
+        assertNull(m.dodajStavku("najam vozila", "1", "2000", "A", ""))
+        assertEquals("1500", m.ostatakPosleAvansa.toString())
+        assertNull(poslatiRacuni().single()["dateAndTimeOfIssue"]?.takeUnless { it is kotlinx.serialization.json.JsonNull })
+
+        m.sifraKupca = "10"
+        m.brojKupca = "888877"
+        m.izdaj()
+        assertEquals("PIB ima tačno 9 cifara", m.poruka?.tekst)
+        assertEquals(1, poslatiRacuni().size, "ništa nije poslato")
+
+        m.sifraKupca = "20"
+        m.brojKupca = "123456789"
+        m.primljeno = "2000"
+        m.izdaj()
+        m.poslednjiPosao!!.join()
+        val (zatvaranje, konacni) = poslatiRacuni().takeLast(2)
+        assertEquals("Refund", zatvaranje.tekst("transactionType"))
+        assertEquals("20:123456789", zatvaranje.tekst("buyerId"))
+        assertEquals("1500", konacni.iznos(), "u kasi ostaje ostatak, kusur 500")
+        assertEquals("Cash", konacni.nacin())
+        assertNull(m.konacniPosao, "posle izdavanja se vraća običan račun")
+        assertTrue(m.stavke.isEmpty())
+        assertEquals("", m.brojKupca)
     }
 }

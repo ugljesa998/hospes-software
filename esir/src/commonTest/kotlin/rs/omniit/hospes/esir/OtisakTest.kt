@@ -132,4 +132,14 @@ class OtisakTest {
         assertContentEquals(EscPos.POCETAK, racun.copyOfRange(0, 2))
         assertContentEquals(EscPos.ODSECANJE, racun.copyOfRange(racun.size - 4, racun.size))
     }
+
+    @Test
+    fun dugRedEsirSePrelama() {
+        val delovi = Otisak.delovi(TEKST_PROMET, null, dodatak = listOf("Последњи авансни рачун: 7EHXTU6T-7EHXTU6T-59 18.11.2026"))
+        assertEquals(
+            listOf(DeoOtiska.Red("Последњи авансни рачун:"), DeoOtiska.Red("7EHXTU6T-7EHXTU6T-59 18.11.2026")),
+            delovi.takeLast(2),
+        )
+        assertTrue(delovi.filterIsInstance<DeoOtiska.Red>().all { it.tekst.length <= Otisak.KOLONA })
+    }
 }

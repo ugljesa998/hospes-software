@@ -12,6 +12,10 @@ import kotlinx.coroutines.IO
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import rs.omniit.hospes.esir.Artikal
+import rs.omniit.hospes.esir.Avans
+import rs.omniit.hospes.esir.AvansnaUplata
+import rs.omniit.hospes.esir.AvansniPosao
+import rs.omniit.hospes.esir.SifraAvansa
 import rs.omniit.hospes.esir.Decimal4
 import rs.omniit.hospes.esir.EsirGreska
 import rs.omniit.hospes.esir.FilterZurnala
@@ -46,6 +50,8 @@ import rs.omniit.hospes.esir.poSifriIliGtinu
 import rs.omniit.hospes.esir.redZaPotpisKupca
 import rs.omniit.hospes.esir.prometIzPredracuna
 import rs.omniit.hospes.esir.zahtevZaPonistavanje
+import rs.omniit.hospes.esir.avansniPosao
+import rs.omniit.hospes.esir.esirVremeZaDatumUplate
 import rs.omniit.hospes.esir.datum
 import rs.omniit.hospes.esir.mesecnaRefundacijaKartica
 import rs.omniit.hospes.esir.refundacijaZa
@@ -113,6 +119,24 @@ class EsirModel(private val okruzenje: Okruzenje, private val scope: CoroutineSc
     var posebanSlucaj by mutableStateOf(PosebanSlucaj.NE)
     var korporativniPib by mutableStateOf("")
     var korporativnaKartica by mutableStateOf("")
+
+    /**
+     * Avans Prodaja (vrsta „Avans“, PURS 9.1): iznos, poreska oznaka, šifra avansa (`null` = po stopi),
+     * datum uplate kada je novac stigao ranije (9.2) i prethodni avans istog posla.
+     */
+    var avansIznos by mutableStateOf("")
+    var avansOznaka by mutableStateOf<String?>(null)
+    var avansSifra by mutableStateOf<SifraAvansa?>(null)
+    var avansDatumUplate by mutableStateOf("")
+    var prethodniAvans by mutableStateOf<IzdatRacun?>(null)
+        private set
+
+    /**
+     * Konačni račun posle avansa koji se upravo pravi levo (stavke po punoj ceni), ili `null`.
+     * Dok je postavljen, „Izdaj“ izdaje zatvaranje avansa i konačni račun, a plaćanje je samo ostatak.
+     */
+    var konacniPosao by mutableStateOf<AvansniPosao?>(null)
+        private set
 
     /** Kupac na računu (npr. „na firmu“: šifra 10 = PIB); prazan broj = račun bez kupca. */
     var sifraKupca by mutableStateOf("10")
@@ -399,6 +423,14 @@ class EsirModel(private val okruzenje: Okruzenje, private val scope: CoroutineSc
             poruka = Poruka(it, greska = true)
             return
         }
+        konacniPosao?.let { p ->
+            izdajKonacniRacun(p.poslednji, nacinPlacanja, primljeno)?.let { poruka = Poruka(it, greska = true) }
+            return
+        }
+        if (vrstaRacuna == VrstaRacuna.AVANS) {
+            izdajAvans()
+            return
+        }
         if (stavke.isEmpty()) {
             poruka = Poruka("Račun nema stavki", greska = true)
             return
@@ -472,6 +504,12 @@ class EsirModel(private val okruzenje: Okruzenje, private val scope: CoroutineSc
      */
     fun ponisti(original: IzdatRacun): String? {
         bezKasira()?.let { return it }
+        if (jeKonacniPosleAvansa(original)) return "Konačni račun posle avansa se za sada ne poništava iz aplikacije"
+        avansniPosao(original)?.let { p ->
+            if (!p.mozeSledeciAvans || p.poslednji.racun.invoiceNumber != original.racun.invoiceNumber) {
+                return "Poništava se samo poslednji avans posla koji nije zatvoren"
+            }
+        }
         zbirnaRefundacijaZa(original)?.let { return "Račun je obuhvaćen zbirnom mesečnom refundacijom ${it.racun.invoiceNumber}" }
         refundacijeZa(original).takeIf { it.isNotEmpty() }?.let { r ->
             return "Račun je već refundiran (${r.joinToString { it.racun.invoiceNumber }}); poništavanje nije moguće"
@@ -529,6 +567,198 @@ class EsirModel(private val okruzenje: Okruzenje, private val scope: CoroutineSc
     /** Današnji mesec `gggg-mm` (za mesečnu refundaciju). */
     fun ovajMesec(): String = okruzenje.danas().take(7)
 
+    /**
+     * Konačni račun posle avansa (Promet Prodaja uz poziv na Avans Refundaciju): stavke su po punoj ceni, a plaćanje
+     * samo ostatak. Njegova refundacija i poništavanje nisu jasno opisani u uputstvu, pa ih aplikacija za sada ne nudi.
+     */
+    fun jeKonacniPosleAvansa(izdat: IzdatRacun): Boolean {
+        if (izdat.zahtev.invoiceType != VrstaRacuna.PROMET || izdat.zahtev.transactionType != TipTransakcije.PRODAJA) return false
+        val referenca = izdat.zahtev.referentDocumentNumber?.let(okruzenje.zurnal::nadji) ?: return false
+        return referenca.zahtev.invoiceType == VrstaRacuna.AVANS && referenca.zahtev.transactionType == TipTransakcije.REFUNDACIJA
+    }
+
+    /** Avansni posao kome pripada račun (avans ili njegovo zatvaranje), ili `null`. */
+    fun avansniPosao(izdat: IzdatRacun): AvansniPosao? = okruzenje.zurnal.avansniPosao(izdat)
+
+    /** Šifra avansa: izabrana, ili po stopi izabrane oznake (20% → 10, 10% → 11, 0% → 12). */
+    fun sifraAvansa(): SifraAvansa? =
+        avansSifra ?: stope.firstOrNull { it.label == avansOznaka }?.let { SifraAvansa.zaStopu(it.rate) }
+
+    /** Sledeći avans istog posla: poziva se na poslednji avans; kupac i oznaka kao u poslu. */
+    fun zapocniSledeciAvans(posao: AvansniPosao) {
+        konacniPosao = null
+        vrstaRacuna = VrstaRacuna.AVANS
+        posebanSlucaj = PosebanSlucaj.NE
+        prethodniAvans = posao.poslednji
+        posao.lanac.firstNotNullOfOrNull { it.zahtev.buyerId }?.split(":", limit = 2)?.takeIf { it.size == 2 }?.let {
+            sifraKupca = it[0]
+            brojKupca = it[1]
+        }
+        avansOznaka = posao.poslednji.zahtev.items.firstOrNull()?.labels?.firstOrNull()
+    }
+
+    /** Konačni račun za ovaj posao se pravi levo: vrsta Promet, stavke po punoj ceni, plaća se ostatak. */
+    fun zapocniKonacni(posao: AvansniPosao) {
+        konacniPosao = posao
+        vrstaRacuna = VrstaRacuna.PROMET
+        posebanSlucaj = PosebanSlucaj.NE
+        prethodniAvans = null
+    }
+
+    fun otkaziKonacni() {
+        konacniPosao = null
+    }
+
+    /** Kupac sa avansa (ako je upisan na nekom avansu ili zatvaranju), ili `null`. */
+    val kupacSaAvansa: String?
+        get() = konacniPosao?.let { p -> p.zatvaranje?.zahtev?.buyerId ?: p.lanac.firstNotNullOfOrNull { it.zahtev.buyerId } }
+
+    /** Ostatak za plaćanje na konačnom računu: stavke levo minus avansi. */
+    val ostatakPosleAvansa: Decimal4?
+        get() = konacniPosao?.let { ukupno - it.ukupno }
+
+    /** Avans više nije nastavak posla, nego prvi avans novog posla. */
+    fun noviAvansniPosao() {
+        prethodniAvans = null
+    }
+
+    private fun izdajAvans() {
+        val kupac = brojKupca.trim().takeIf { it.isNotEmpty() }?.let { "$sifraKupca:$it" }
+        val (zahtev, dodatak) = try {
+            kupac?.let { id -> SifarnikKupca.proveriIdKupca(id)?.let { throw IllegalArgumentException(it) } }
+            require(avansIznos.isNotBlank()) { "Unesi iznos avansa" }
+            val iznos = broj(avansIznos)
+            require(iznos > Decimal4.NULA) { "Iznos avansa mora biti veći od nule" }
+            require(iznos.brojDecimala <= 2) { "Iznos avansa može da ima najviše 2 decimale" }
+            val oznaka = avansOznaka ?: throw IllegalArgumentException("Izaberi poresku oznaku avansa")
+            val sifra = sifraAvansa() ?: throw IllegalArgumentException("Za ovu stopu izaberi šifru avansa (10–13)")
+            prethodniAvans?.let { p ->
+                val posao = avansniPosao(p)
+                require(posao != null && posao.mozeSledeciAvans && posao.poslednji.racun.invoiceNumber == p.racun.invoiceNumber) {
+                    "Avansni posao se u međuvremenu promenio; izaberi ga ponovo u žurnalu"
+                }
+            }
+            // 9.2: „ESIR vreme“ samo kada je uplata starija od današnjeg dana; za današnju se ne šalje.
+            val esirVreme = avansDatumUplate.trim().takeIf { it.isNotEmpty() }?.let { datum ->
+                val vreme = esirVremeZaDatumUplate(datum)
+                require(datum <= okruzenje.danas()) { "Datum uplate ne može biti posle današnjeg dana" }
+                vreme.takeIf { datum < okruzenje.danas() }
+            }
+            val dato = primljeno.takeIf { it.isNotBlank() && nacinPlacanja == NacinPlacanja.GOTOVINA }?.let(::broj)
+            val naplata = Obracun.naplata(iznos, listOf(nacinPlacanja to null), dato)
+            Avans.zahtevZaAvans(
+                uplate = listOf(AvansnaUplata(sifra, oznaka, iznos)),
+                placanje = naplata.placanja,
+                idKupca = kupac,
+                prethodni = prethodniAvans,
+                kasir = kasir,
+                datumUplate = esirVreme,
+            ) to listOfNotNull(redKusura(naplata.kusur))
+        } catch (e: IllegalArgumentException) {
+            poruka = Poruka(e.message ?: "Neispravan avans", greska = true)
+            return
+        }
+        posao { veza ->
+            val r = izdajZahtev(veza, zahtev, dodatak)
+            poruka = r.poruka
+            if (r.izdat != null) {
+                avansIznos = ""
+                avansDatumUplate = ""
+                primljeno = ""
+                brojKupca = ""
+                prethodniAvans = null
+            }
+        }
+    }
+
+    /**
+     * Konačni račun posle avansa (PURS 9.1): stavke su na računu levo, po punoj ceni. Ako posao nije zatvoren,
+     * prvo se izdaje Avans Refundacija za sve avanse (ostaje u radnji), pa Promet Prodaja na kojoj PFR-u ide samo ostatak.
+     * Vraća grešku (ništa nije poslato PFR-u) ili `null` ako je rad sa PFR-om započet.
+     */
+    fun izdajKonacniRacun(avans: IzdatRacun, nacin: NacinPlacanja, primljeno: String = ""): String? {
+        bezKasira()?.let { return it }
+        val posao = avansniPosao(avans) ?: return "Račun ${avans.racun.invoiceNumber} nije avans"
+        if (posao.ponisten) return "Avansni posao je poništen"
+        posao.konacni?.let { return "Konačni račun je već izdat: ${it.racun.invoiceNumber}" }
+        if (stavke.isEmpty()) return "Dodaj stavke konačnog računa (levo), po punoj ceni"
+        val preostalo = ukupno - posao.ukupno
+        if (preostalo < Decimal4.NULA) {
+            return "Avansi (${posao.ukupno.zaStampu()}) su veći od računa (${ukupno.zaStampu()}); delimična realizacija avansa još nije podržana"
+        }
+        val kupac = posao.zatvaranje?.zahtev?.buyerId
+            ?: posao.lanac.firstNotNullOfOrNull { it.zahtev.buyerId }
+            ?: brojKupca.trim().takeIf { it.isNotEmpty() }?.let { "$sifraKupca:$it" }
+            ?: return "Unesi kupca (levo, „Kupac“): zatvaranje avansa traži ID kupca"
+        SifarnikKupca.proveriIdKupca(kupac)?.let { return it }
+        val kusur = try {
+            val dato = primljeno.takeIf { it.isNotBlank() && nacin == NacinPlacanja.GOTOVINA && preostalo > Decimal4.NULA }?.let(::broj)
+            Obracun.naplata(preostalo, listOf(nacin to null), dato).kusur
+        } catch (e: IllegalArgumentException) {
+            return e.message ?: "Neispravna naplata"
+        }
+        val zahtevZatvaranja = if (posao.zatvaranje == null) {
+            try {
+                Avans.zahtevZaZatvaranje(posao.lanac, kupac, kasir)
+            } catch (e: IllegalArgumentException) {
+                return e.message
+            }
+        } else {
+            null
+        }
+        val stavkeKonacnog = stavke.toList()
+
+        posao { veza ->
+            var porukaZatvaranja = ""
+            val zatvaranje = posao.zatvaranje ?: run {
+                val ar = izdajZahtev(veza, zahtevZatvaranja!!)
+                porukaZatvaranja = ar.poruka.tekst + " "
+                ar.izdat ?: run {
+                    poruka = ar.poruka
+                    return@posao
+                }
+            }
+            val konacni = try {
+                Avans.konacniRacun(zatvaranje, stavkeKonacnog, nacin, kasir)
+            } catch (e: IllegalArgumentException) {
+                poruka = Poruka(porukaZatvaranja + (e.message ?: "Konačni račun nije moguće sastaviti"), greska = true)
+                return@posao
+            }
+            val dodatak = konacni.dodatniRedovi + listOfNotNull(redKusura(kusur)) + konacni.reklamnoPolje
+            val r = try {
+                izdajZahtev(veza, konacni.zahtev, dodatak)
+            } catch (e: EsirGreska) {
+                Izdavanje(null, Poruka(e.message ?: e.toString(), greska = true))
+            }
+            poruka = if (r.izdat != null) {
+                Poruka(porukaZatvaranja + r.poruka.tekst, greska = r.poruka.greska)
+            } else {
+                Poruka(
+                    porukaZatvaranja + "Konačni račun NIJE izdat: ${r.poruka.tekst} Avansi su zatvoreni; izdaj konačni račun ponovo " +
+                        "(na računu ${zatvaranje.racun.invoiceNumber}).",
+                    greska = true,
+                )
+            }
+            if (r.izdat != null) {
+                stavke.clear()
+                this@EsirModel.primljeno = ""
+                brojKupca = ""
+                konacniPosao = null
+            }
+        }
+        return null
+    }
+
+    /** Kusur za [iznos] kada je kupac dao [primljeno] u gotovini, ili `null`. */
+    fun kusurZa(iznos: Decimal4, primljeno: String): Decimal4? = runCatching {
+        val dato = primljeno.takeIf { it.isNotBlank() }?.let(::broj) ?: return null
+        if (iznos <= Decimal4.NULA) return null
+        Obracun.naplata(iznos, listOf(NacinPlacanja.GOTOVINA to null), dato).kusur
+    }.getOrNull()
+
+    private fun redKusura(kusur: Decimal4): String? =
+        if (kusur > Decimal4.NULA) "Повраћај:" + kusur.zaStampu().padStart(31) else null
+
     /** Refundacija koja je već izdata za ovaj račun, ili `null`. */
     fun refundacijaZa(izdat: IzdatRacun): IzdatRacun? = okruzenje.zurnal.refundacijaZa(izdat.racun.invoiceNumber)
 
@@ -572,6 +802,7 @@ class EsirModel(private val okruzenje: Okruzenje, private val scope: CoroutineSc
         val id = "$sifraKupca:${brojKupca.trim()}"
         SifarnikKupca.proveriIdKupca(id)?.let { return it }
         zbirnaRefundacijaZa(original)?.let { return "Račun je obuhvaćen zbirnom mesečnom refundacijom ${it.racun.invoiceNumber}" }
+        if (jeKonacniPosleAvansa(original)) return "Konačni račun posle avansa se za sada ne refundira iz aplikacije"
         val ranije = refundacijeZa(original)
         val preostalo = original.preostaloZaRefundaciju(ranije)
         if (preostalo.all { it == Decimal4.NULA }) {

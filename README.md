@@ -40,6 +40,16 @@ Radnje nad računom iz žurnala (izaberi račun, dugmad ispod naslova):
 - „Kopija“: kopija računa vrste Promet (potvrđuje se drugim klikom).
 - „Poništi (greška)“ (9.3): refundacija celog Promet ili Avans računa na sopstveni PIB, bez povraćaja novca; zatim novi račun.
 
+Avansi (PURS 9.1, 9.2), vrsta računa „Avans“:
+- Prvi avans: iznos, poreska oznaka, šifra avansa (sama po stopi: 20% → 10, 10% → 11, 0% → 12; 13 se bira),
+  kupac i plaćanje; „Datum uplate“ samo kada je novac stigao ranije (9.2, „ESIR vreme“).
+- U žurnalu, na avansu: „Avansni posao“ (svi avansi i zbir), „Sledeći avans“ (poziva se na poslednji) i „Konačni račun“.
+- „Konačni račun“ prebacuje levu stranu u režim konačnog računa: stavke po punoj ceni, plaćeno avansom, ostatak, kupac
+  (obavezan; sa avansa ili se unosi). Jedno dugme „Zatvori avanse i izdaj konačni račun“ izdaje Avans Refundaciju
+  (ostaje u radnji) i Promet Prodaju na kojoj PFR-u ide samo ostatak; ispod računa: plaćeno avansom, PDV na avans,
+  preostalo, poslednji avans. „Otkaži“ vraća običan račun.
+- Delimična realizacija avansa (avans veći od računa) i refundacija konačnog računa posle avansa još nisu podržane.
+
 Specijalni slučajevi (PURS 9.4, 9.5, 9.7), na računu koji se pravi:
 - „Poseban slučaj: Bez naknade“ (9.7): stavke sa „00:“, plaćanje drugo bezgotovinsko, ispod računa „*Промет без накнаде“.
 - „Poseban slučaj: Korporativna kartica“ (9.4): PIB firme i broj kartice, plaćanje vaučer. Jednom mesečno u Žurnalu:
