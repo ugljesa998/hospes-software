@@ -27,6 +27,11 @@ jobs:
       - name: Instalacioni paket (.msi)
         run: ./gradlew.bat :app:packageMsi
 
+      - name: jpackage log (samo ako .msi padne)
+        if: failure()
+        shell: pwsh
+        run: Get-ChildItem app/build/compose/logs -Recurse -Filter *.txt | ForEach-Object { "==== $($_.FullName)"; Get-Content $_.FullName }
+
       - name: Sačuvaj .msi
         uses: actions/upload-artifact@v4
         with:

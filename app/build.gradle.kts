@@ -48,9 +48,10 @@ compose.desktop {
             packageName = "Hospes POS"
             // Ista verzija kao Esir.VERSION i kao u prijavi 1795 kod Poreske uprave.
             packageVersion = "0.0.1"
-            description = "Hospes POS - elektronski sistem za izdavanje računa (ESIR)"
+            // Samo ASCII: WiX (pravi .msi) podrazumevano radi u kodnoj strani 1252, u kojoj nema č, ć, đ, š, ž.
+            description = "Hospes POS - elektronski sistem za izdavanje racuna (ESIR)"
             vendor = "OmniIT"
-            copyright = "© 2026 OmniIT"
+            copyright = "Copyright 2026 OmniIT"
             // Predlog alata (suggestRuntimeModules) i moduli koje alat ne vidi: šifrovanje za HTTPS ka V-PFR-u,
             // kodne strane za CSV iz Excela (windows-1250) i java.naming za HTTP biblioteku.
             modules("java.instrument", "java.management", "jdk.unsupported", "jdk.crypto.ec", "jdk.charsets", "java.naming")
