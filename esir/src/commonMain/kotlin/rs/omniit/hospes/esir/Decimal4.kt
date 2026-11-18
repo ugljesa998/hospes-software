@@ -26,6 +26,10 @@ value class Decimal4 private constructor(val unscaled: Long) : Comparable<Decima
 
     override fun compareTo(other: Decimal4): Int = unscaled.compareTo(other.unscaled)
 
+    operator fun plus(other: Decimal4): Decimal4 = uOpsegu(unscaled + other.unscaled)
+
+    operator fun minus(other: Decimal4): Decimal4 = uOpsegu(unscaled - other.unscaled)
+
     /** Zapis bez nepotrebnih nula na kraju: `10`, `0.5`, `27.2727`. */
     override fun toString(): String {
         val negativan = unscaled < 0
@@ -44,7 +48,15 @@ value class Decimal4 private constructor(val unscaled: Long) : Comparable<Decima
 
         val NULA = Decimal4(0)
 
-        fun izUnscaled(unscaled: Long): Decimal4 = Decimal4(unscaled)
+        /** Najveća vrednost: 14 cifara celog dela i 4 decimale. Zbir dve takve vrednosti i dalje staje u Long. */
+        private const val MAKS_UNSCALED = 999_999_999_999_999_999L
+
+        fun izUnscaled(unscaled: Long): Decimal4 = uOpsegu(unscaled)
+
+        private fun uOpsegu(unscaled: Long): Decimal4 {
+            require(unscaled in -MAKS_UNSCALED..MAKS_UNSCALED) { "Iznos je van dozvoljenog opsega" }
+            return Decimal4(unscaled)
+        }
 
         /**
          * Čita broj iz teksta, npr. `"300"`, `"27.27"` ili `"0.5"`.

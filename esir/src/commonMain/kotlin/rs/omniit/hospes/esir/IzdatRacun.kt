@@ -25,7 +25,7 @@ data class IzdatRacun(
     fun zahtevZaRefundaciju(idKupca: String, opcionoPoljeKupca: String? = null): ZahtevZaRacun {
         require(zahtev.transactionType == TipTransakcije.PRODAJA) { "Refundira se samo račun prodaje, a ovo je $oznaka" }
         require(zahtev.invoiceType in VRSTE_ZA_REFUNDACIJU) {
-            "Refundacija je podržana za Promet i Obuku, a ovo je $oznaka"
+            "Refundacija je podržana za Promet, Obuku i Predračun, a ovo je $oznaka"
         }
         return zahtev.copy(
             transactionType = TipTransakcije.REFUNDACIJA,
@@ -50,9 +50,28 @@ data class IzdatRacun(
             dateAndTimeOfIssue = null,
         )
     }
+
+    /**
+     * Zahtev za Promet Prodaju koja proizilazi iz ovog predračuna: iste stavke,
+     * uz poziv na predračun (ESIR upitnik, deo 10, P13).
+     *
+     * @param placanje stvarno plaćanje pri prodaji; ako se ne navede, isto kao na predračunu.
+     */
+    fun zahtevZaPrometIzPredracuna(placanje: List<Placanje>? = null): ZahtevZaRacun {
+        require(zahtev.invoiceType == VrstaRacuna.PREDRACUN && zahtev.transactionType == TipTransakcije.PRODAJA) {
+            "Promet iz predračuna se pravi samo od računa Predračun Prodaja, a ovo je $oznaka"
+        }
+        return zahtev.copy(
+            invoiceType = VrstaRacuna.PROMET,
+            payment = placanje ?: zahtev.payment,
+            referentDocumentNumber = racun.invoiceNumber,
+            referentDocumentDT = racun.sdcDateTime,
+            dateAndTimeOfIssue = null,
+        )
+    }
 }
 
-private val VRSTE_ZA_REFUNDACIJU = setOf(VrstaRacuna.PROMET, VrstaRacuna.OBUKA)
+private val VRSTE_ZA_REFUNDACIJU = setOf(VrstaRacuna.PROMET, VrstaRacuna.OBUKA, VrstaRacuna.PREDRACUN)
 
 /** Naziv vrste računa kako ga koristi PURS, npr. „Promet“. */
 val VrstaRacuna.naziv: String
@@ -62,6 +81,18 @@ val VrstaRacuna.naziv: String
         VrstaRacuna.KOPIJA -> "Kopija"
         VrstaRacuna.OBUKA -> "Obuka"
         VrstaRacuna.AVANS -> "Avans"
+    }
+
+/** Naziv načina plaćanja kako se piše na računu, npr. „Gotovina“. */
+val NacinPlacanja.naziv: String
+    get() = when (this) {
+        NacinPlacanja.DRUGO_BEZGOTOVINSKO -> "Drugo bezgotovinsko plaćanje"
+        NacinPlacanja.GOTOVINA -> "Gotovina"
+        NacinPlacanja.PLATNA_KARTICA -> "Platna kartica"
+        NacinPlacanja.CEK -> "Ček"
+        NacinPlacanja.PRENOS_NA_RACUN -> "Prenos na račun"
+        NacinPlacanja.VAUCER -> "Vaučer"
+        NacinPlacanja.INSTANT_PLACANJE -> "Instant plaćanje"
     }
 
 /** Naziv tipa transakcije kako ga koristi PURS, npr. „Prodaja“. */

@@ -29,6 +29,7 @@ fun main(args: Array<String>) {
         "racun" -> runBlocking { komandaRacun(args.toList()) }
         "refundacija" -> runBlocking { komandaRefundacija(args.toList()) }
         "kopija" -> runBlocking { komandaKopija(args.toList()) }
+        "iz-predracuna" -> runBlocking { komandaIzPredracuna(args.toList()) }
         "lista" -> komandaLista()
         "provera" -> runBlocking { komandaProvera(args.toList()) }
         else -> {
@@ -47,10 +48,13 @@ private fun ispisiPomoc() {
         Komande:
           status                              stanje L-PFR-a: dostupnost, PIN, šifre stanja, poreske stope
           pin                                 PIN iz config/local.json (jednom, bez ponavljanja)
-          racun [--vrsta obuka|promet] [--oznaka A]
-                                              „Test kafa“ 1 × 300 RSD, gotovina (podrazumevano Obuka)
-          refundacija <broj> --kupac 20:123   refundacija celog računa, uz ID kupca
+          racun [--vrsta obuka|promet|predracun] [--placanje gotovina] [--oznaka A]
+                                              „Test kafa“ 1 × 300 RSD (podrazumevano Obuka, gotovina)
+          refundacija <broj> --kupac 20:123   refundacija celog računa (Promet, Obuka, Predračun), uz ID kupca
           kopija <broj>                       kopija računa vrste Promet
+          iz-predracuna <broj> [--placanje kartica]
+                                              Promet Prodaja uz poziv na predračun
+          (načini plaćanja: gotovina, kartica, cek, prenos, vaucer, instant, drugo)
           lista                               računi sačuvani u folderu racuni/
           provera <RequestId>                 da li je poslednji račun sa tim RequestId izdat
         """.trimIndent()

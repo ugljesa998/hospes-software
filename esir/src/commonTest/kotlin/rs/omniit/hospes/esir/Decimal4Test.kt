@@ -31,6 +31,15 @@ class Decimal4Test {
     }
 
     @Test
+    fun sabiranjeIOduzimanjeSuTacni() {
+        assertEquals("0.3", (Decimal4.parse("0.1") + Decimal4.parse("0.2")).toString())
+        assertEquals("-27.2727", (Decimal4.parse("272.7273") - Decimal4.parse("300")).toString())
+        assertFailsWith<IllegalArgumentException> {
+            Decimal4.parse("99999999999999.9999") + Decimal4.parse("0.0001")
+        }
+    }
+
+    @Test
     fun poredjenje() {
         assertTrue(Decimal4.parse("10") > Decimal4.parse("9.9999"))
         assertEquals(Decimal4.parse("10"), Decimal4.parse("10.0000"))

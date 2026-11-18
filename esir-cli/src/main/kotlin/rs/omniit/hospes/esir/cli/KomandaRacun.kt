@@ -27,15 +27,17 @@ import java.util.Base64
 private val folderRacuna = File("racuni")
 
 /**
- * `racun [--vrsta obuka|promet] [--oznaka A]`: izdaje račun „Test kafa“, 1 × 300 RSD, gotovina.
- * Podrazumevano je Obuka Prodaja, kao treći `curl` test.
+ * `racun [--vrsta obuka|promet|predracun] [--placanje gotovina] [--oznaka A]`:
+ * izdaje račun „Test kafa“, 1 × 300 RSD. Podrazumevano je Obuka Prodaja, gotovina, kao treći `curl` test.
  */
 internal suspend fun komandaRacun(argumenti: List<String>) {
     val vrsta = when (val v = vrednostOpcije(argumenti, "--vrsta") ?: "obuka") {
         "obuka" -> VrstaRacuna.OBUKA
         "promet" -> VrstaRacuna.PROMET
-        else -> prekini("Nepoznata vrsta „$v“. Dozvoljeno: obuka, promet")
+        "predracun" -> VrstaRacuna.PREDRACUN
+        else -> prekini("Nepoznata vrsta „$v“. Dozvoljeno: obuka, promet, predracun")
     }
+    val nacinPlacanja = nacinPlacanja(argumenti) ?: NacinPlacanja.GOTOVINA
     val trazenaOznaka = vrednostOpcije(argumenti, "--oznaka") ?: "A"
 
     saLpfrom { veza, status ->
@@ -49,14 +51,50 @@ internal suspend fun komandaRacun(argumenti: List<String>) {
         val zahtev = ZahtevZaRacun(
             invoiceType = vrsta,
             transactionType = TipTransakcije.PRODAJA,
-            payment = listOf(Placanje(iznos, NacinPlacanja.GOTOVINA)),
+            payment = listOf(Placanje(iznos, nacinPlacanja)),
             items = listOf(Stavka("Test kafa", Decimal4.parse("1"), iznos, iznos, listOf(stopa.label))),
             cashier = "Hospes test",
         )
         red("Poreska oznaka", "${stopa.label} (${stopa.rate}%, iz statusa L-PFR-a)")
-        izdajIPrikazi(veza, status, zahtev, "${vrsta.naziv} Prodaja: „Test kafa“ 1 × 300 RSD, gotovina")
+        izdajIPrikazi(
+            veza, status, zahtev,
+            "${vrsta.naziv} Prodaja: „Test kafa“ 1 × 300 RSD, ${nacinPlacanja.naziv.lowercase()}",
+        )
     }
 }
+
+/** `iz-predracuna <PFR broj predračuna> [--placanje gotovina]`: Promet Prodaja uz poziv na predračun. */
+internal suspend fun komandaIzPredracuna(argumenti: List<String>) {
+    val broj = argumenti.getOrNull(1)?.takeUnless { it.startsWith("--") }
+        ?: prekini("Upotreba: iz-predracuna <PFR broj predračuna> [--placanje gotovina|kartica|...]")
+    val original = ucitajIzdat(broj)
+    val placanje = nacinPlacanja(argumenti)?.let { nacin ->
+        listOf(Placanje(original.zahtev.payment.fold(Decimal4.NULA) { zbir, p -> zbir + p.amount }, nacin))
+    }
+    val zahtev = try {
+        original.zahtevZaPrometIzPredracuna(placanje)
+    } catch (e: IllegalArgumentException) {
+        prekini(e.message ?: e.toString())
+    }
+
+    saLpfrom { veza, status ->
+        val nacini = zahtev.payment.joinToString(", ") { it.paymentType.naziv.lowercase() }
+        izdajIPrikazi(veza, status, zahtev, "Promet Prodaja iz predračuna $broj, $nacini")
+    }
+}
+
+private fun nacinPlacanja(argumenti: List<String>): NacinPlacanja? =
+    when (val p = vrednostOpcije(argumenti, "--placanje")) {
+        null -> null
+        "gotovina" -> NacinPlacanja.GOTOVINA
+        "kartica" -> NacinPlacanja.PLATNA_KARTICA
+        "cek" -> NacinPlacanja.CEK
+        "prenos" -> NacinPlacanja.PRENOS_NA_RACUN
+        "vaucer" -> NacinPlacanja.VAUCER
+        "instant" -> NacinPlacanja.INSTANT_PLACANJE
+        "drugo" -> NacinPlacanja.DRUGO_BEZGOTOVINSKO
+        else -> prekini("Nepoznat način plaćanja „$p“. Dozvoljeno: gotovina, kartica, cek, prenos, vaucer, instant, drugo")
+    }
 
 /** `refundacija <PFR broj računa> --kupac 20:123456789`: refundacija celog sačuvanog računa. */
 internal suspend fun komandaRefundacija(argumenti: List<String>) {
