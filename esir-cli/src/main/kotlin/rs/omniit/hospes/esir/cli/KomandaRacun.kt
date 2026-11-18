@@ -20,6 +20,7 @@ import rs.omniit.hospes.esir.VrstaRacuna
 import rs.omniit.hospes.esir.ZahtevZaRacun
 import rs.omniit.hospes.esir.naziv
 import rs.omniit.hospes.esir.noviRequestId
+import rs.omniit.hospes.esir.redZaPotpisKupca
 import java.io.File
 
 /** Elektronski žurnal komandne linije: folder `racuni/` (zahtev + odgovor, tekst, QR kod). Nije u Git-u. */
@@ -82,7 +83,7 @@ internal suspend fun komandaRacun(argumenti: List<String>) {
 }
 
 /** Stavka iz opisa „Naziv;količina;cena[;oznaka[;popust%]]“, npr. „Kafa;3;250;A;10“ ili „Sir /kg;0.250;1199.99“. */
-private fun stavkaIzOpisa(opis: String, podrazumevanaOznaka: String, stope: List<PoreskaStopa>): Stavka {
+internal fun stavkaIzOpisa(opis: String, podrazumevanaOznaka: String, stope: List<PoreskaStopa>): Stavka {
     val delovi = opis.split(";").map { it.trim() }
     if (delovi.size !in 3..5 || delovi[0].isEmpty()) {
         prekini("Neispravna stavka „$opis“. Format: \"Naziv;količina;cena[;oznaka[;popust%]]\", npr. \"Kafa;3;250;A;10\"")
@@ -105,13 +106,13 @@ private fun stavkaIzOpisa(opis: String, podrazumevanaOznaka: String, stope: List
 }
 
 /** Deo naplate iz „gotovina“ ili „kartica:500“. */
-private fun deoNaplate(opis: String): Pair<NacinPlacanja, Decimal4?> {
+internal fun deoNaplate(opis: String): Pair<NacinPlacanja, Decimal4?> {
     val naziv = opis.substringBefore(':')
     val iznos = opis.substringAfter(':', "").takeIf { it.isNotEmpty() }?.let { broj(it, "iznos u „$opis“") }
     return nacinIzNaziva(naziv) to iznos
 }
 
-private fun broj(tekst: String, sta: String): Decimal4 =
+internal fun broj(tekst: String, sta: String): Decimal4 =
     runCatching { Decimal4.parse(tekst.replace(',', '.')) }.getOrElse { prekini("Neispravan broj za $sta: „$tekst“") }
 
 /** `iz-predracuna <PFR broj predračuna> [--placanje gotovina]`: Promet Prodaja uz poziv na predračun. */
@@ -178,7 +179,10 @@ internal suspend fun komandaKopija(argumenti: List<String>) {
     }
 
     saPfrom(argumenti) { veza, status ->
-        izdajIPrikazi(veza, status, zahtev, "Kopija ${zahtev.transactionType.naziv} za $broj")
+        izdajIPrikazi(
+            veza, status, zahtev, "Kopija ${zahtev.transactionType.naziv} za $broj",
+            dodatak = listOfNotNull(zahtev.redZaPotpisKupca()),
+        )
     }
 }
 

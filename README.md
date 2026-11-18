@@ -52,6 +52,17 @@ Avansni tok (PURS uputstvo, poglavlje 9.1):
 
 Izdati računi se čuvaju u folderu `racuni/` (tekst računa, QR kod kao GIF, ceo odgovor PFR-a). Folder nije u Git-u.
 
+Specijalni slučajevi (PURS uputstvo, poglavlje 9):
+
+```bash
+./gradlew -q :esir-cli:run --args="ponisti <PFR broj>"                                  # 9.3 poništavanje greške (sopstveni PIB)
+./gradlew -q :esir-cli:run --args="korporativna --pib 123456789 --kartica 6666666"      # 9.4 korporacijska kartica, vaučer
+./gradlew -q :esir-cli:run --args="korporativna-refundacija --pib 123456789 --mesec 2026-11"   # 9.4 zbirna mesečna refundacija
+./gradlew -q :esir-cli:run --args="vaucer --iznos 1000"                                 # 9.5 jednonamenski vaučer
+./gradlew -q :esir-cli:run --args="bez-naknade --stavka 'Poklon;1;300'"                 # 9.7 promet bez naknade
+./gradlew -q :esir-cli:run --args="avans --iznos 400 --kupac 10:123456789 --datum-uplate 2026-11-17"   # 9.2 starija uplata
+```
+
 ### L-PFR ili V-PFR
 
 Sve komande koje rade sa PFR-om primaju `--pfr lpfr` (podrazumevano) ili `--pfr vpfr`:

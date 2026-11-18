@@ -9,6 +9,7 @@ import rs.omniit.hospes.esir.PoreskaStopa
 import rs.omniit.hospes.esir.SifraAvansa
 import rs.omniit.hospes.esir.StatusOdgovor
 import rs.omniit.hospes.esir.Stavka
+import rs.omniit.hospes.esir.esirVremeZaDatumUplate
 import rs.omniit.hospes.esir.naziv
 
 /**
@@ -21,6 +22,9 @@ internal suspend fun komandaAvans(argumenti: List<String>) {
     val nacin = nacinPlacanja(argumenti) ?: NacinPlacanja.PRENOS_NA_RACUN
     val kupac = vrednostOpcije(argumenti, "--kupac")
     val prethodni = vrednostOpcije(argumenti, "--prethodni")?.let(::ucitajIzdat)
+    val esirVreme = vrednostOpcije(argumenti, "--datum-uplate")?.let {
+        runCatching { esirVremeZaDatumUplate(it) }.getOrElse { e -> prekini(e.message ?: e.toString()) }
+    }
 
     saPfrom(argumenti) { veza, status ->
         val stopa = stopaIzOpcije(argumenti, status)
@@ -32,6 +36,7 @@ internal suspend fun komandaAvans(argumenti: List<String>) {
                 idKupca = kupac,
                 prethodni = prethodni,
                 kasir = "Hospes test",
+                datumUplate = esirVreme,
             )
         } catch (e: IllegalArgumentException) {
             prekini(e.message ?: e.toString())

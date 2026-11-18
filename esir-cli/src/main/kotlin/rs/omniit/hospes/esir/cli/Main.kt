@@ -33,6 +33,11 @@ fun main(args: Array<String>) {
         "avans" -> runBlocking { komandaAvans(args.toList()) }
         "zatvori-avans" -> runBlocking { komandaZatvoriAvans(args.toList()) }
         "konacni-racun" -> runBlocking { komandaKonacniRacun(args.toList()) }
+        "ponisti" -> runBlocking { komandaPonisti(args.toList()) }
+        "vaucer" -> runBlocking { komandaVaucer(args.toList()) }
+        "korporativna" -> runBlocking { komandaKorporativna(args.toList()) }
+        "korporativna-refundacija" -> runBlocking { komandaKorporativnaRefundacija(args.toList()) }
+        "bez-naknade" -> runBlocking { komandaBezNaknade(args.toList()) }
         "zurnal" -> komandaZurnal(args.toList())
         "lista" -> komandaZurnal(listOf("zurnal", "--sve"))
         "provera" -> runBlocking { komandaProvera(args.toList()) }
@@ -58,17 +63,25 @@ private fun ispisiPomoc() {
                 [--placanje gotovina | --placanje kartica:500 ...] [--primljeno 1000] [--oznaka A] [--kupac 10:123]
                                               račun sa obračunom (bez --stavka: „Test kafa“ 1 × 300, Obuka, gotovina)
           refundacija <broj> --kupac 20:123   refundacija celog računa (Promet, Obuka, Predračun), uz ID kupca
-          kopija <broj>                       kopija računa vrste Promet
+          kopija <broj>                       kopija računa vrste Promet (kod gotovinske refundacije: red za potpis kupca)
           iz-predracuna <broj> [--placanje kartica]
                                               Promet Prodaja uz poziv na predračun
           avans --iznos 1000 [--kupac 10:123] [--prethodni <broj>] [--placanje prenos] [--oznaka A] [--sifra 11]
-                                              Avans Prodaja; sledeći avans se poziva na prethodni
+                [--datum-uplate gggg-mm-dd]   Avans Prodaja; sledeći avans se poziva na prethodni;
+                                              datum uplate = „ESIR vreme“ kad je virman stariji (PURS 9.2)
           zatvori-avans <broj poslednjeg avansa> [--kupac 10:123]
                                               Avans Refundacija za zbir svih avansa (ne daje se kupcu)
           konacni-racun <broj AR> --iznos 2500 [--naziv "..."] [--placanje kartica]
                                               Promet Prodaja posle avansa; PFR-u ide samo ostatak
+          ponisti <broj> [--pib 123456789]    poništavanje računa sa greškom: refundacija sa sopstvenim PIB-om (9.3)
+          vaucer --iznos 6000 [--oznaka A]    prodaja jednonamenskog vaučera (9.5)
+          korporativna --pib 123456789 --kartica 6666666 [--stavka '...']...
+                                              prodaja korporacijskom karticom, plaćanje vaučer (9.4)
+          korporativna-refundacija --pib 123456789 [--mesec 2026-11]
+                                              zbirna mesečna refundacija za kupca, iz žurnala (9.4)
+          bez-naknade [--stavka '...']...     promet bez naknade, šifra 00: i drugo bezgotovinsko (9.7)
           (načini plaćanja: gotovina, kartica, cek, prenos, vaucer, instant, drugo)
-          zurnal [--od gggg-mm-dd] [--do gggg-mm-dd] [--sve] [--vrsta promet] [--tip refundacija]
+          zurnal[--od gggg-mm-dd] [--do gggg-mm-dd] [--sve] [--vrsta promet] [--tip refundacija]
                  [--kupac 20:123] [--placanje kartica] [--trazi tekst]
                                               elektronski žurnal (podrazumevano poslednjih 30 dana)
           zurnal --prikazi <broj>             ceo račun iz žurnala

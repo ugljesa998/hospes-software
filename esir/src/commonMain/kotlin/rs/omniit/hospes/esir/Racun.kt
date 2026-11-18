@@ -79,6 +79,22 @@ data class ZahtevZaRacun(
         if (referentDocumentDT != null && referentDocumentNumber == null) {
             add("Vreme računa na koji se poziva traži i njegov broj")
         }
+        if (buyerCostCenterId?.startsWith("${KorporativnaKartica.SIFRA_KARTICE}:") == true &&
+            payment.any { it.paymentType != NacinPlacanja.VAUCER }
+        ) {
+            add("Kod korporacijske kartice (50:) način plaćanja je uvek vaučer (PURS 9.4)")
+        }
+        items.filter(JednonamenskiVaucer::jeVaucer).groupBy { it.labels }.forEach { (oznake, vauceri) ->
+            if (vauceri.size > 1) add("Na jednom računu može biti samo jedan jednonamenski vaučer po stopi ($oznake) (PURS 9.5)")
+        }
+        if (items.any(PrometBezNaknade::jeBezNaknade)) {
+            if (!items.all(PrometBezNaknade::jeBezNaknade)) {
+                add("Promet bez naknade (00:) ne može na istom računu sa plaćenim stavkama (PURS 9.7)")
+            }
+            if (payment.any { it.paymentType != NacinPlacanja.DRUGO_BEZGOTOVINSKO }) {
+                add("Kod prometa bez naknade način plaćanja je „drugo bezgotovinsko“ (PURS 9.7)")
+            }
+        }
         items.forEachIndexed { i, s -> s.proveri().forEach { add("Stavka ${i + 1}: $it") } }
     }
 }
