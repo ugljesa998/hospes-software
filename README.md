@@ -26,6 +26,7 @@ Gradle ne treba instalirati: `./gradlew` sam preuzima odgovarajuću verziju.
 ./gradlew :esir:allTests        # samo testovi ESIR modula
 ./gradlew :esir-cli:run         # pokretanje komandne linije (spisak komandi)
 ./gradlew -q :esir-cli:run --args="status"   # stanje L-PFR-a, šifre stanja, poreske stope
+./gradlew -q :esir-cli:run --args="pin"      # PIN iz config/local.json, šalje se najviše jednom
 ```
 
 Kada komanda završi sa greškom, Gradle na kraju ispiše `BUILD FAILED`. To je očekivano: program je vratio kod greške.

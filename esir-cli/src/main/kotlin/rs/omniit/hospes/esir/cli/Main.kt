@@ -7,6 +7,7 @@ import rs.omniit.hospes.esir.EsirHttp
 import rs.omniit.hospes.esir.LpfrPodesavanja
 import rs.omniit.hospes.esir.LpfrVeza
 import rs.omniit.hospes.esir.Podesavanja
+import rs.omniit.hospes.esir.RezultatPina
 import rs.omniit.hospes.esir.SifreStanja
 import rs.omniit.hospes.esir.StatusOdgovor
 import rs.omniit.hospes.esir.VrstaSifre
@@ -24,6 +25,7 @@ fun main(args: Array<String>) {
     when (val komanda = args.firstOrNull()) {
         null, "pomoc" -> ispisiPomoc()
         "status" -> runBlocking { komandaStatus() }
+        "pin" -> runBlocking { komandaPin() }
         else -> {
             println("Nepoznata komanda: $komanda")
             ispisiPomoc()
@@ -37,7 +39,7 @@ private fun ispisiPomoc() {
         """
         Komande:
           status   provera L-PFR-a: dostupnost, PIN, šifre stanja, poreske stope
-          pin      slanje PIN-a (u izradi)
+          pin      slanje PIN-a iz config/local.json (jednom, bez ponavljanja)
           racun    izdavanje Training Sale računa (u izradi)
         """.trimIndent()
     )
@@ -75,6 +77,57 @@ private suspend fun komandaStatus() {
             prekini(e.message ?: e.toString())
         }
         ispisiStatus(status)
+    }
+}
+
+private suspend fun komandaPin() {
+    val podesavanja = ucitajLpfrPodesavanja()
+    val pin = podesavanja.pin ?: prekini("U config/local.json nije upisan lpfr.pin.")
+    println("L-PFR: ${bezbedanPrikazAdrese(podesavanja.baseUrl)} (token iz adrese se ne ispisuje)")
+    println()
+
+    EsirHttp.napraviZaJvm().use { http ->
+        val veza = LpfrVeza(podesavanja.baseUrl, http)
+        val rezultat = try {
+            veza.unesiPin(pin)
+        } catch (e: EsirGreska) {
+            prekini(e.message ?: e.toString())
+        }
+
+        when (rezultat) {
+            RezultatPina.Prihvacen -> {
+                println("PIN je prihvaćen (0100). L-PFR ga pamti dok se kartica ne izvadi.")
+                val sifre = try {
+                    veza.status().gsc
+                } catch (e: EsirGreska) {
+                    prekini("PIN je prihvaćen, ali provera statusa posle toga nije uspela: ${e.message}")
+                }
+                println()
+                println("Šifre stanja posle PIN-a:")
+                sifre.forEach { kod -> println("  $kod  ${SifreStanja.za(kod).opis}") }
+            }
+            RezultatPina.NijePotreban ->
+                println("PIN nije poslat: L-PFR već ima ispravan PIN.")
+            is RezultatPina.NijePoslat -> {
+                val kod = rezultat.sifra?.kod?.let { " ($it)" } ?: ""
+                val savet = if (rezultat.sifra?.kod == "1300") {
+                    "\nNa portalu: Развојно окружење → Развојни Л-ПФР → „Уметни картицу“."
+                } else ""
+                prekini("PIN nije poslat: ${rezultat.razlog}$kod.$savet")
+            }
+            is RezultatPina.Odbijen -> {
+                val s = rezultat.sifra
+                val savet = when {
+                    s.trajna -> "Kartica je zaključana i ne može da se koristi."
+                    s.kod == "2100" ->
+                        "Program NE pokušava ponovo. Proveri PIN na portalu (kolona ПИН).\n" +
+                            "Posle 5 pogrešnih PIN-ova kartica se zaključava. Na razvojnom L-PFR-u brojač se " +
+                            "resetuje dugmetom „Ресетуј бројач ПИН-а“."
+                    else -> "Program ne pokušava ponovo."
+                }
+                prekini("PIN nije prihvaćen: ${s.kod} ${s.opis}.\n$savet")
+            }
+        }
     }
 }
 
