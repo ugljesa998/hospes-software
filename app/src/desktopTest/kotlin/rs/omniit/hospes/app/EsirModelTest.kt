@@ -16,7 +16,9 @@ import rs.omniit.hospes.esir.Artikal
 import rs.omniit.hospes.esir.Decimal4
 import rs.omniit.hospes.esir.EsirHttp
 import rs.omniit.hospes.esir.KatalogUMemoriji
+import rs.omniit.hospes.esir.LpfrPodesavanja
 import rs.omniit.hospes.esir.LpfrVeza
+import rs.omniit.hospes.esir.Podesavanja
 import rs.omniit.hospes.esir.NacinPlacanja
 import rs.omniit.hospes.esir.OtvorenPfr
 import rs.omniit.hospes.esir.SirinaPapira
@@ -33,8 +35,11 @@ import kotlin.test.assertTrue
 /** Ceo tok ESIR test ekrana (bez prozora), sa lažnim L-PFR-om. */
 class EsirModelTest {
     private val json = headersOf(HttpHeaders.ContentType, "application/json")
-    private val status = """
-        {"isPinRequired":false,"gsc":["0100"],"uid":"TEST1234","supportedLanguages":["sr-Cyrl-RS"],
+    /** L-PFR traži PIN (status) i šta odgovara na PIN. */
+    private var traziPin = false
+    private var odgovorNaPin = "\"0100\""
+    private val status get() = """
+        {"isPinRequired":$traziPin,"gsc":["0100"],"uid":"TEST1234","supportedLanguages":["sr-Cyrl-RS"],
          "currentTaxRates":{"taxCategories":[{"name":"VAT","taxRates":[{"rate":10,"label":"A"},{"rate":0,"label":"B"}]}]}}
     """
     private val izdat = """
@@ -54,8 +59,20 @@ class EsirModelTest {
     private val odstampano = mutableListOf<Pair<String, SirinaPapira>>()
     private var stampacRadi = true
 
+    /** Sačuvana podešavanja (umesto fajla); jedan kasir, pa je izabran odmah. */
+    private var sacuvano = Podesavanja(lpfr = LpfrPodesavanja("http://lpfr.test/api"), kasiri = listOf("Test kasir"))
+
     private val okruzenje = object : Okruzenje {
-        override val pin = "1234"
+        override val folderPodataka = "/test"
+        override fun ucitajPodesavanja() = sacuvano
+        override fun sacuvajPodesavanja(podesavanja: Podesavanja) {
+            sacuvano = podesavanja
+        }
+        override fun izaberiSertifikat(): String? = "config/test.p12"
+        override fun opisSertifikata(putanja: String, lozinka: String): String {
+            require(lozinka == "dobra") { "Sertifikat ne može da se otvori: lozinka nije dobra ili fajl nije .p12/.pfx" }
+            return "UID TEST1234 · PIB 115423827"
+        }
         override val zurnal = ZurnalUMemoriji()
         override val katalog = KatalogUMemoriji(
             listOf(
@@ -79,6 +96,7 @@ class EsirModelTest {
                     when {
                         z.url.encodedPath.endsWith("/attention") -> respond("", HttpStatusCode.OK)
                         z.url.encodedPath.endsWith("/status") -> respond(status, HttpStatusCode.OK, json)
+                        z.url.encodedPath.endsWith("/pin") -> respond(odgovorNaPin, HttpStatusCode.OK, json)
                         z.url.encodedPath.endsWith("/invoices") -> {
                             // Kao pravi PFR: novi broj računa i ukupni brojač (po njemu se žurnal ređa kada je vreme isto).
                             val n = ++brojRacuna
@@ -199,7 +217,7 @@ class EsirModelTest {
         m.osvezi()
         m.poslednjiPosao!!.join()
         assertNull(m.dodajStavku("Kafa", "1", "300", "A", ""))
-        m.papir = SirinaPapira.MM58
+        m.izaberiPapir(SirinaPapira.MM58)
         stampacRadi = false
         m.izdaj()
         m.poslednjiPosao!!.join()
@@ -374,5 +392,102 @@ class EsirModelTest {
             m.refundiraj(original, "20", "123456789"),
         )
         assertEquals(5, poslatiRacuni().size)
+    }
+
+    @Test
+    fun kasirNaRacunuIRefundaciji() = runTest {
+        sacuvano = sacuvano.copy(kasiri = listOf("Marko", "Ana"))
+        val m = EsirModel(okruzenje, this)
+        assertNull(m.kasir, "dva kasira: bira se na početku smene")
+        m.osvezi()
+        m.poslednjiPosao!!.join()
+        assertNull(m.dodajStavku("Kafa", "1", "300", "A", ""))
+        m.izdaj()
+        assertEquals("Izaberi kasira (gore desno)", m.poruka?.tekst)
+        assertEquals(0, poslatiRacuni().size)
+
+        m.izaberiKasira("Ana")
+        m.vrstaRacuna = VrstaRacuna.PROMET
+        m.izdaj()
+        m.poslednjiPosao!!.join()
+        assertEquals("Ana", poslatiRacuni().single().tekst("cashier"))
+
+        m.izaberiKasira("Marko")
+        val original = assertNotNull(okruzenje.zurnal.nadji("TEST1234-TEST1234-1"))
+        assertNull(m.refundiraj(original, "20", "123456789"))
+        m.poslednjiPosao!!.join()
+        assertEquals(listOf("Ana", "Marko", "Marko"), poslatiRacuni().map { it.tekst("cashier") }, "refundaciju i kopiju izdaje Marko")
+    }
+
+    @Test
+    fun bezKasiraNemaRacuna() = runTest {
+        sacuvano = sacuvano.copy(kasiri = emptyList())
+        val m = EsirModel(okruzenje, this)
+        assertNull(m.dodajStavku("Kafa", "1", "300", "A", ""))
+        m.izdaj()
+        assertEquals("Dodaj kasira u Podešavanjima", m.poruka?.tekst)
+    }
+
+    @Test
+    fun pinUnosiKasirIJednomSeSalje() = runTest {
+        traziPin = true
+        val m = EsirModel(okruzenje, this)
+        m.osvezi()
+        m.poslednjiPosao!!.join()
+        assertEquals(true, m.status?.isPinRequired)
+
+        assertEquals("PIN ima tačno 4 cifre", m.posaljiPin("12"))
+        assertTrue(zahtevi.none { it.url.encodedPath.endsWith("/pin") })
+
+        odgovorNaPin = "\"2100\""
+        assertNull(m.posaljiPin("4321"))
+        m.poslednjiPosao!!.join()
+        val pinZahtevi = zahtevi.filter { it.url.encodedPath.endsWith("/pin") }
+        assertEquals(1, pinZahtevi.size, "odbijen PIN se ne šalje ponovo sam")
+        assertEquals("4321", (pinZahtevi.single().body as io.ktor.http.content.TextContent).text)
+        assertTrue(m.poruka!!.greska && "posle 5 pogrešnih kartica se zaključava" in m.poruka!!.tekst, m.poruka!!.tekst)
+
+        odgovorNaPin = "\"0100\""
+        traziPin = false
+        assertNull(m.posaljiPin("1234"))
+        m.poslednjiPosao!!.join()
+        assertEquals("L-PFR već ima ispravan PIN; PIN nije poslat", m.poruka?.tekst)
+        assertEquals(1, zahtevi.count { it.url.encodedPath.endsWith("/pin") })
+    }
+
+    @Test
+    fun podesavanjaSeCuvaju() = runTest {
+        val m = EsirModel(okruzenje, this)
+        assertEquals("Test kasir", m.kasir)
+
+        assertEquals("Unesi ime kasira", m.dodajKasira(" "))
+        assertNull(m.dodajKasira(" Ana "))
+        assertEquals("Kasir Ana već postoji", m.dodajKasira("Ana"))
+        assertEquals(listOf("Test kasir", "Ana"), sacuvano.kasiri)
+        m.ukloniKasira("Test kasir")
+        assertEquals(listOf("Ana"), sacuvano.kasiri)
+        assertEquals("Ana", m.kasir, "ostao je jedan kasir")
+
+        m.izaberiPapir(SirinaPapira.MM58)
+        assertEquals(SirinaPapira.MM58, sacuvano.papir)
+
+        assertEquals("Adresa mora da počinje sa http:// ili https://; Adresa mora da se završava sa /api", m.sacuvajLpfr("ftp://x"))
+        assertNull(m.sacuvajLpfr(" http://192.168.1.20:7555/api "))
+        m.poslednjiPosao?.join()
+        assertEquals("http://192.168.1.20:7555/api", sacuvano.lpfr?.baseUrl)
+
+        assertEquals("Sertifikat nije upisan; Lozinka nije upisan; PAC nije upisan", m.sacuvajVpfr(null, "", ""))
+        assertEquals(
+            "Sertifikat ne može da se otvori: lozinka nije dobra ili fajl nije .p12/.pfx",
+            m.sacuvajVpfr("config/test.p12", "losa", "ABC123"),
+        )
+        assertNull(m.sacuvajVpfr("config/test.p12", "dobra", " ABC123 "))
+        assertEquals("ABC123", sacuvano.vpfr?.pac)
+        assertEquals("V-PFR je sačuvan: UID TEST1234 · PIB 115423827", m.porukaPodesavanja?.tekst)
+
+        m.izaberiPfr(VrstaPfra.VPFR)
+        assertEquals(VrstaPfra.VPFR, sacuvano.pfr)
+        assertEquals(VrstaPfra.VPFR, EsirModel(okruzenje, this).vrstaPfra, "posle ponovnog pokretanja isti PFR")
+        m.zatvori()
     }
 }

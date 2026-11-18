@@ -3,6 +3,7 @@ package rs.omniit.hospes.esir
 import io.ktor.client.HttpClient
 
 /** Sa kojim PFR-om ESIR radi. */
+@kotlinx.serialization.Serializable
 enum class VrstaPfra(val naziv: String) {
     LPFR("L-PFR"),
     VPFR("V-PFR"),

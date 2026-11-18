@@ -16,6 +16,10 @@ import rs.omniit.hospes.esir.Decimal4
 import rs.omniit.hospes.esir.EsirGreska
 import rs.omniit.hospes.esir.FilterZurnala
 import rs.omniit.hospes.esir.IzdatRacun
+import rs.omniit.hospes.esir.VpfrPodesavanja
+import rs.omniit.hospes.esir.Podesavanja
+import rs.omniit.hospes.esir.LpfrPodesavanja
+import rs.omniit.hospes.esir.Kasiri
 import rs.omniit.hospes.esir.KatalogCsv
 import rs.omniit.hospes.esir.LpfrVeza
 import rs.omniit.hospes.esir.NacinPlacanja
@@ -55,7 +59,19 @@ data class PrikazRacuna(val izdat: IzdatRacun, val naslov: String, val tekst: St
  */
 class EsirModel(private val okruzenje: Okruzenje, private val scope: CoroutineScope) {
 
-    var vrstaPfra by mutableStateOf(VrstaPfra.LPFR)
+    /** Podešavanja kase; menjaju se samo kroz radnje ispod, koje ih odmah i čuvaju. */
+    var podesavanja by mutableStateOf(okruzenje.ucitajPodesavanja())
+        private set
+    var porukaPodesavanja by mutableStateOf<Poruka?>(null)
+        private set
+
+    val folderPodataka: String get() = okruzenje.folderPodataka
+
+    /** Kasir koji izdaje račune; ime se štampa na računu. Ako je kasir jedan, izabran je odmah. */
+    var kasir by mutableStateOf(podesavanja.kasiri.singleOrNull())
+        private set
+
+    var vrstaPfra by mutableStateOf(podesavanja.izabraniPfr)
         private set
     var opisPfra by mutableStateOf<String?>(null)
         private set
@@ -78,7 +94,8 @@ class EsirModel(private val okruzenje: Okruzenje, private val scope: CoroutineSc
     var brojKupca by mutableStateOf("")
 
     /** Papir u štampaču (podešavanje kase); račun se štampa jednom, odmah posle izdavanja. */
-    var papir by mutableStateOf(SirinaPapira.MM80)
+    var papir by mutableStateOf(podesavanja.papir ?: SirinaPapira.MM80)
+        private set
 
     var prikazan by mutableStateOf<PrikazRacuna?>(null)
         private set
@@ -107,8 +124,14 @@ class EsirModel(private val okruzenje: Okruzenje, private val scope: CoroutineSc
 
     fun izaberiPfr(vrsta: VrstaPfra) {
         if (vrsta == vrstaPfra || radi) return
-        zatvori()
         vrstaPfra = vrsta
+        sacuvaj(podesavanja.copy(pfr = vrsta))
+        poveziPonovo()
+    }
+
+    /** Zatvara vezu i ponovo proverava PFR (posle promene podešavanja). */
+    private fun poveziPonovo() {
+        zatvori()
         status = null
         dostupan = null
         osvezi()
@@ -121,16 +144,102 @@ class EsirModel(private val okruzenje: Okruzenje, private val scope: CoroutineSc
         if (!javlja) poruka = Poruka("${veza.naziv} se ne javlja", greska = true)
     }
 
-    fun posaljiPin() = posao { veza ->
-        val lpfr = veza as? LpfrVeza ?: return@posao run { poruka = Poruka("V-PFR nema PIN", greska = true) }
-        val pin = okruzenje.pin ?: return@posao run { poruka = Poruka("PIN nije upisan u config/local.json", greska = true) }
-        poruka = when (val r = lpfr.unesiPin(pin)) {
-            RezultatPina.Prihvacen -> Poruka("PIN je prihvaćen (0100)", greska = false)
-            RezultatPina.NijePotreban -> Poruka("L-PFR već ima ispravan PIN", greska = false)
-            is RezultatPina.NijePoslat -> Poruka("PIN nije poslat: ${r.razlog}", greska = true)
-            is RezultatPina.Odbijen -> Poruka("PIN nije prihvaćen: ${r.sifra.kod} ${r.sifra.opis}. Ne pokušava se ponovo.", greska = true)
+    /**
+     * PIN kartice koji je kasir ukucao. Šalje se **jednom** i samo ako ga L-PFR traži; posle odbijanja nema
+     * automatskog ponovnog slanja (posle 5 pogrešnih PIN-ova kartica se zaključava).
+     * Vraća grešku unosa (ništa nije poslato) ili `null` ako je rad sa PFR-om započet.
+     */
+    fun posaljiPin(pin: String): String? {
+        if (!Regex("""\d{4}""").matches(pin)) return "PIN ima tačno 4 cifre"
+        posao { veza ->
+            val lpfr = veza as? LpfrVeza ?: return@posao run { poruka = Poruka("V-PFR nema PIN", greska = true) }
+            poruka = when (val r = lpfr.unesiPin(pin)) {
+                RezultatPina.Prihvacen -> Poruka("PIN je prihvaćen (0100)", greska = false)
+                RezultatPina.NijePotreban -> Poruka("L-PFR već ima ispravan PIN; PIN nije poslat", greska = false)
+                is RezultatPina.NijePoslat -> Poruka("PIN nije poslat: ${r.razlog}", greska = true)
+                is RezultatPina.Odbijen -> Poruka(
+                    "PIN nije prihvaćen (${r.sifra.kod} ${r.sifra.opis}). Proveri PIN pre novog pokušaja: " +
+                        "posle 5 pogrešnih kartica se zaključava.",
+                    greska = true,
+                )
+            }
+            status = veza.status()
         }
-        status = veza.status()
+        return null
+    }
+
+    fun izaberiKasira(ime: String) {
+        if (ime in podesavanja.kasiri) kasir = ime
+    }
+
+    /** Dodaje kasira u podešavanja; vraća grešku ili `null`. */
+    fun dodajKasira(ime: String): String? {
+        val i = ime.trim()
+        Kasiri.proveri(i)?.let { return it }
+        if (i in podesavanja.kasiri) return "Kasir $i već postoji"
+        sacuvaj(podesavanja.copy(kasiri = podesavanja.kasiri + i))?.let { return it }
+        if (kasir == null) kasir = i
+        return null
+    }
+
+    fun ukloniKasira(ime: String) {
+        sacuvaj(podesavanja.copy(kasiri = podesavanja.kasiri - ime))
+        if (kasir == ime) kasir = podesavanja.kasiri.singleOrNull()
+    }
+
+    fun izaberiPapir(p: SirinaPapira) {
+        papir = p
+        sacuvaj(podesavanja.copy(papir = p))
+    }
+
+    /** Čuva adresu L-PFR-a (PIN iz komandne linije, ako je upisan, ostaje); vraća grešku ili `null`. */
+    fun sacuvajLpfr(adresa: String): String? {
+        val lpfr = LpfrPodesavanja(adresa.trim(), podesavanja.lpfr?.pin)
+        lpfr.proveri().filterNot { it.startsWith("lpfr.pin") }.takeIf { it.isNotEmpty() }?.let { return razumljivo(it) }
+        sacuvaj(podesavanja.copy(lpfr = lpfr))?.let { return it }
+        porukaPodesavanja = Poruka("L-PFR je sačuvan.", greska = false)
+        if (vrstaPfra == VrstaPfra.LPFR) poveziPonovo()
+        return null
+    }
+
+    fun izaberiSertifikat(): String? = okruzenje.izaberiSertifikat()
+
+    fun opisSertifikata(putanja: String?, lozinka: String): Result<String> = runCatching {
+        require(!putanja.isNullOrBlank()) { "Izaberi sertifikat" }
+        okruzenje.opisSertifikata(putanja, lozinka)
+    }
+
+    /** Čuva V-PFR: sertifikat, lozinku i PAC; sertifikat se pre čuvanja proverava. Vraća grešku ili `null`. */
+    fun sacuvajVpfr(putanja: String?, lozinka: String, pac: String): String? {
+        val vpfr = VpfrPodesavanja(podesavanja.vpfr?.baseUrl, putanja, lozinka.ifBlank { null }, pac.trim().ifBlank { null })
+        vpfr.proveri().takeIf { it.isNotEmpty() }?.let { return razumljivo(it) }
+        val opis = opisSertifikata(putanja, lozinka).getOrElse { return it.message ?: "Sertifikat nije ispravan" }
+        sacuvaj(podesavanja.copy(vpfr = vpfr))?.let { return it }
+        porukaPodesavanja = Poruka("V-PFR je sačuvan: $opis", greska = false)
+        if (vrstaPfra == VrstaPfra.VPFR) poveziPonovo()
+        return null
+    }
+
+    private fun sacuvaj(novo: Podesavanja): String? = try {
+        okruzenje.sacuvajPodesavanja(novo)
+        podesavanja = novo
+        null
+    } catch (e: Exception) {
+        "Podešavanja nisu sačuvana: ${e.message ?: e}".also { porukaPodesavanja = Poruka(it, greska = true) }
+    }
+
+    /** Poruke iz provere podešavanja, bez imena polja iz JSON-a. */
+    private fun razumljivo(problemi: List<String>): String = problemi.joinToString("; ") {
+        it.replace("lpfr.baseUrl", "Adresa").replace("vpfr.baseUrl", "Adresa")
+            .replace("vpfr.pfxPath", "Sertifikat").replace("vpfr.pfxPassword", "Lozinka").replace("vpfr.pac", "PAC")
+            .replace(" (putanja do .p12/.pfx fajla)", "")
+    }
+
+    /** Greška ako kasir nije izabran (račun bez kasira se ne izdaje). */
+    private fun bezKasira(): String? = when {
+        kasir != null -> null
+        podesavanja.kasiri.isEmpty() -> "Dodaj kasira u Podešavanjima"
+        else -> "Izaberi kasira (gore desno)"
     }
 
     /** Dodaje stavku iz unetih polja; vraća poruku greške ili `null` ako je stavka dodata. */
@@ -261,6 +370,10 @@ class EsirModel(private val okruzenje: Okruzenje, private val scope: CoroutineSc
         }.getOrNull()
 
     fun izdaj() {
+        bezKasira()?.let {
+            poruka = Poruka(it, greska = true)
+            return
+        }
         if (stavke.isEmpty()) {
             poruka = Poruka("Račun nema stavki", greska = true)
             return
@@ -284,7 +397,7 @@ class EsirModel(private val okruzenje: Okruzenje, private val scope: CoroutineSc
             transactionType = TipTransakcije.PRODAJA,
             payment = naplata.placanja,
             items = stavke.toList(),
-            cashier = "Hospes test",
+            cashier = kasir,
             buyerId = kupac,
         )
         val dodatak = if (naplata.kusur > Decimal4.NULA) listOf("Повраћај:" + naplata.kusur.zaStampu().padStart(31)) else emptyList()
@@ -338,6 +451,7 @@ class EsirModel(private val okruzenje: Okruzenje, private val scope: CoroutineSc
         kolicine: List<String>? = null,
         nacin: NacinPlacanja? = null,
     ): String? {
+        bezKasira()?.let { return it }
         if (brojKupca.isBlank()) return "Unesi broj (${SifarnikKupca.idKupca[sifraKupca] ?: "dokument kupca"})"
         val id = "$sifraKupca:${brojKupca.trim()}"
         SifarnikKupca.proveriIdKupca(id)?.let { return it }
@@ -396,6 +510,7 @@ class EsirModel(private val okruzenje: Okruzenje, private val scope: CoroutineSc
      * Vraća grešku (ništa nije poslato PFR-u) ili `null` ako je rad sa PFR-om započet.
      */
     fun naplatiPredracun(predracun: IzdatRacun, nacin: NacinPlacanja, primljeno: String = ""): String? {
+        bezKasira()?.let { return it }
         prometIzPredracuna(predracun)?.let {
             return "Predračun ${predracun.racun.invoiceNumber} je već naplaćen računom ${it.racun.invoiceNumber}"
         }
@@ -423,6 +538,7 @@ class EsirModel(private val okruzenje: Okruzenje, private val scope: CoroutineSc
      * Vraća grešku (ništa nije poslato PFR-u) ili `null` ako je rad sa PFR-om započet.
      */
     fun izdajKopiju(original: IzdatRacun): String? {
+        bezKasira()?.let { return it }
         val zahtev = try {
             original.zahtevZaKopiju()
         } catch (e: IllegalArgumentException) {
@@ -435,8 +551,12 @@ class EsirModel(private val okruzenje: Okruzenje, private val scope: CoroutineSc
     /** Ishod slanja jednog zahteva PFR-u: izdat račun (ili `null`) i poruka za kasira. */
     private class Izdavanje(val izdat: IzdatRacun?, val poruka: Poruka)
 
-    /** Šalje zahtev PFR-u; izdat račun upisuje u žurnal, prikazuje i štampa (jednom). */
-    private suspend fun izdajZahtev(veza: PfrVeza, zahtev: ZahtevZaRacun, dodatak: List<String> = emptyList()): Izdavanje {
+    /**
+     * Šalje zahtev PFR-u; izdat račun upisuje u žurnal, prikazuje i štampa (jednom).
+     * Kasir na računu je uvek kasir koji ga sada izdaje (i kod refundacije, kopije i naplate predračuna).
+     */
+    private suspend fun izdajZahtev(veza: PfrVeza, zahtevBezKasira: ZahtevZaRacun, dodatak: List<String> = emptyList()): Izdavanje {
+        val zahtev = zahtevBezKasira.copy(cashier = kasir)
         val jezik = PfrVeza.JEZIK_SRPSKI_CIRILICA.takeIf { it in status?.supportedLanguages.orEmpty() }
             ?: status?.supportedLanguages?.firstOrNull()
         val requestId = noviRequestId()

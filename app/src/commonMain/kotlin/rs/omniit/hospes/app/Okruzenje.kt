@@ -4,16 +4,29 @@ import androidx.compose.ui.graphics.ImageBitmap
 import rs.omniit.hospes.esir.ElektronskiZurnal
 import rs.omniit.hospes.esir.Katalog
 import rs.omniit.hospes.esir.OtvorenPfr
+import rs.omniit.hospes.esir.Podesavanja
 import rs.omniit.hospes.esir.SirinaPapira
 import rs.omniit.hospes.esir.VrstaPfra
 
 /**
  * Ono što ekran dobija od platforme (desktop sada, Android kasnije):
- * otvaranje PFR veze, elektronski žurnal, katalog artikala, izbor fajla, PIN iz podešavanja i današnji datum.
+ * podešavanja kase, otvaranje PFR veze, elektronski žurnal, katalog artikala, izbor fajla, štampa i današnji datum.
+ * PIN kartice ovde ne postoji: unosi ga kasir na ekranu.
  */
 interface Okruzenje {
-    /** PIN za L-PFR iz podešavanja (razvoj). U pravoj kasi PIN unosi kasir. */
-    val pin: String?
+    /** Folder sa podacima kase (podešavanja, žurnal, katalog, štampa); prikazuje se u podešavanjima. */
+    val folderPodataka: String
+
+    /** Sačuvana podešavanja kase (PFR, kasiri, papir); prazna pri prvom pokretanju. */
+    fun ucitajPodesavanja(): Podesavanja
+
+    fun sacuvajPodesavanja(podesavanja: Podesavanja)
+
+    /** Kasir bira fajl sertifikata za V-PFR (.p12/.pfx); fajl se čuva uz podešavanja. Vraća putanju za podešavanja ili `null`. */
+    fun izaberiSertifikat(): String?
+
+    /** Proverava sertifikat i lozinku; vraća opis (UID, PIB, adresa V-PFR-a, rok) ili baca [IllegalArgumentException]. */
+    fun opisSertifikata(putanja: String, lozinka: String): String
 
     val zurnal: ElektronskiZurnal
 
@@ -26,7 +39,7 @@ interface Okruzenje {
     /** Korisnik bira gde da sačuva CSV; upisuje [tekst] i vraća putanju, ili `null` ako je odustao. */
     fun sacuvajCsv(predlogImena: String, tekst: String): String?
 
-    /** Otvara vezu sa PFR-om; baca [IllegalArgumentException] sa porukom ako podešavanja nisu ispravna. */
+    /** Otvara vezu sa PFR-om po poslednjim sačuvanim podešavanjima; baca [IllegalArgumentException] ako nisu ispravna. */
     fun otvoriPfr(vrsta: VrstaPfra): OtvorenPfr
 
     /** Sačuvan tekst računa (PFR + ESIR dodatak), ako postoji. */

@@ -40,6 +40,17 @@ Radnje nad računom iz žurnala (izaberi račun, dugmad ispod naslova):
 - „Kopija“: kopija računa vrste Promet (potvrđuje se drugim klikom).
 Koristi isti `config/local.json`, isti žurnal (`racuni/`) i isti katalog (`podaci/katalog.json`) kao komandna linija.
 
+Kasir, PIN i podešavanja (kartica „Podešavanja“):
+- Kasiri: spisak imena; kasir se bira gore desno, a njegovo ime se štampa na računu („Касир“). Bez kasira račun se ne izdaje.
+- PIN kartice unosi kasir kada L-PFR traži PIN; šalje se jednom (posle 5 pogrešnih kartica se zaključava).
+  Aplikacija PIN ne čita iz fajla; `lpfr.pin` u `config/local.json` koristi samo komandna linija (`pin`).
+- L-PFR: adresa; V-PFR: sertifikat (kopira se u `config/`), lozinka i PAC, uz proveru sertifikata. Tajne su skrivene na ekranu.
+- Papir u štampaču (58/80 mm). Sve se čuva u `config/local.json` (nije u Git-u).
+
+Gde su podaci kase: iz razvoja (`./gradlew :app:run`) u folderu projekta, kao komandna linija; instalirana aplikacija u
+sistemskom folderu (Windows `%APPDATA%\Hospes ESIR`, macOS `~/Library/Application Support/Hospes ESIR`); može i `HOSPES_KOREN`.
+Pri prvom pokretanju bez podešavanja aplikacija otvara „Podešavanja“.
+
 Ako je aplikacija upaljena, zatvori je pre `./gradlew build`, pa je posle ponovo pokreni.
 
 ## Komande

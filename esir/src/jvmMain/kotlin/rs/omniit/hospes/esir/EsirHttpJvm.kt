@@ -53,6 +53,9 @@ class TaxCoreP12(bajtovi: ByteArray, lozinka: CharArray) {
     /** Adresa V-PFR-a upisana u sertifikat (polje 7), npr. `https://vsdc.sandbox.suf.purs.gov.rs`. */
     val adresaVpfr: String? get() = polje(TaxCoreSertifikat.POLJE_ADRESA_VPFR)
 
+    /** Datum do kog sertifikat važi, `gggg-mm-dd`. */
+    val vaziDo: String get() = java.time.LocalDate.ofInstant(sertifikat.notAfter.toInstant(), java.time.ZoneId.systemDefault()).toString()
+
     /** PIB upisan u sertifikat (polje 6). */
     val pib: String? get() = polje(TaxCoreSertifikat.POLJE_PIB)
 

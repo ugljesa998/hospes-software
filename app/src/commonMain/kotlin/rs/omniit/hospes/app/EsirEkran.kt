@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -60,6 +61,9 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -93,15 +97,20 @@ fun App(okruzenje: Okruzenje) {
     }
     DisposableEffect(Unit) { onDispose { model.zatvori() } }
 
+    // Prvo pokretanje (nijedan PFR nije podešen): odmah podešavanja.
+    var desno by remember {
+        mutableStateOf(if (model.podesavanja.lpfr == null && model.podesavanja.vpfr == null) Desno.PODESAVANJA else Desno.RACUN)
+    }
+
     MaterialTheme(colorScheme = lightColorScheme()) {
         Surface(Modifier.fillMaxSize(), color = Color(0xFFF4F4F2)) {
             Column(Modifier.fillMaxSize().padding(16.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Hospes ESIR ${Esir.VERSION}", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
-                    Spacer(Modifier.width(12.dp))
-                    Text("test ekran · sandbox Poreske uprave", color = Color.Gray)
-                    Spacer(Modifier.weight(1f))
+                    Spacer(Modifier.width(16.dp))
                     if (model.radi) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.weight(1f))
+                    IzborKasira(model) { desno = Desno.PODESAVANJA }
                 }
                 Spacer(Modifier.height(12.dp))
                 Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -113,7 +122,7 @@ fun App(okruzenje: Okruzenje) {
                         RacunKartica(model)
                     }
                     Column(Modifier.weight(1f).fillMaxHeight()) {
-                        DesnaStrana(model)
+                        DesnaStrana(model, desno) { desno = it }
                     }
                 }
             }
@@ -130,9 +139,6 @@ private fun PfrKartica(m: EsirModel) {
                 Izbor(VrstaPfra.entries, m.vrstaPfra, { it.naziv }, naIzbor = m::izaberiPfr)
                 Spacer(Modifier.weight(1f))
                 TextButton(onClick = m::osvezi, enabled = !m.radi) { Text("Osveži") }
-                if (m.vrstaPfra == VrstaPfra.LPFR) {
-                    OutlinedButton(onClick = m::posaljiPin, enabled = !m.radi) { Text("Pošalji PIN") }
-                }
             }
             Text(m.opisPfra ?: "Veza još nije otvorena", color = Color.Gray, fontSize = 13.sp)
             val s = m.status
@@ -155,6 +161,7 @@ private fun PfrKartica(m: EsirModel) {
                     )
                 }
             }
+            if (m.vrstaPfra == VrstaPfra.LPFR && m.status?.isPinRequired == true) UnosPina(m)
         }
     }
 }
@@ -207,10 +214,7 @@ private fun RacunKartica(m: EsirModel) {
 
             KupacNaRacunu(m)
 
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Štampač (virtuelni), papir:", fontSize = 13.sp)
-                Izbor(SirinaPapira.entries, m.papir, { it.naziv }, kompaktno = true) { m.papir = it }
-            }
+            Text("Štampa: virtuelni štampač, papir ${m.papir.naziv} (Podešavanja)", color = Color.Gray, fontSize = 12.sp)
 
             Button(
                 onClick = m::izdaj,
@@ -247,7 +251,7 @@ private fun IzKataloga(m: EsirModel) {
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         if (m.artikli.isEmpty()) {
-            Text("Katalog je prazan. Dodaj artikle ili uvezi CSV desno, u kartici „Katalog artikala“.", color = Color.Gray)
+            Text("Katalog je prazan. Dodaj artikle ili uvezi CSV desno, u kartici „Katalog“.", color = Color.Gray)
             return@Column
         }
         OutlinedTextField(
@@ -325,24 +329,30 @@ private fun UnosStavke(m: EsirModel) {
     }
 }
 
-private enum class Desno(val naslov: String) { RACUN("Prikaz računa"), ZURNAL("Žurnal (30 dana)"), KATALOG("Katalog artikala") }
+private enum class Desno(val naslov: String) {
+    RACUN("Račun"),
+    ZURNAL("Žurnal (30 dana)"),
+    KATALOG("Katalog"),
+    PODESAVANJA("Podešavanja"),
+}
 
 @Composable
-private fun ColumnScope.DesnaStrana(m: EsirModel) {
-    var desno by remember { mutableStateOf(Desno.RACUN) }
+private fun ColumnScope.DesnaStrana(m: EsirModel, desno: Desno, naDesno: (Desno) -> Unit) {
     var izgled by remember { mutableStateOf<SirinaPapira?>(m.papir) }
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Izbor(Desno.entries, desno, { it.naslov }) {
-            desno = it
+            naDesno(it)
             if (it == Desno.ZURNAL) m.ucitajZurnal()
             if (it == Desno.KATALOG) m.ucitajKatalog()
         }
     }
     Spacer(Modifier.height(8.dp))
-    if (desno == Desno.KATALOG) {
+    if (desno == Desno.PODESAVANJA) {
+        PodesavanjaKase(m)
+    } else if (desno == Desno.KATALOG) {
         KatalogArtikala(m)
     } else if (desno == Desno.ZURNAL) {
-        ZurnalLista(m) { desno = Desno.RACUN }
+        ZurnalLista(m) { naDesno(Desno.RACUN) }
     } else {
         val p = m.prikazan
         if (p == null) {
@@ -379,6 +389,167 @@ private fun Papir(p: PrikazRacuna) {
                 }
                 RedRacuna(red)
             }
+        }
+    }
+}
+
+/** Kasir koji izdaje račune (ime se štampa na računu); bez kasira račun se ne izdaje. */
+@Composable
+private fun IzborKasira(m: EsirModel, otvoriPodesavanja: () -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("Kasir:", fontWeight = FontWeight.SemiBold)
+        if (m.podesavanja.kasiri.isEmpty()) {
+            OutlinedButton(onClick = otvoriPodesavanja) { Text("Dodaj kasira") }
+        } else {
+            Row(Modifier.widthIn(max = 640.dp).horizontalScroll(rememberScrollState())) {
+                Izbor(m.podesavanja.kasiri, m.kasir, { it }, kompaktno = true, naIzbor = m::izaberiKasira)
+            }
+            if (m.kasir == null) Text("izaberi", color = CRVENA, fontSize = 13.sp)
+        }
+    }
+}
+
+/** PIN kartice: kasir ga unosi kada L-PFR traži; šalje se jednom, a polje se posle slanja briše. */
+@Composable
+private fun UnosPina(m: EsirModel) {
+    var pin by remember { mutableStateOf("") }
+    var greska by remember { mutableStateOf<String?>(null) }
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedTextField(
+            pin,
+            { novi -> if (novi.length <= 4 && novi.all(Char::isDigit)) pin = novi; greska = null },
+            label = { Text("PIN kartice") },
+            singleLine = true,
+            visualTransformation = PasswordVisualTransformation(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+            modifier = Modifier.width(150.dp),
+        )
+        Button(onClick = { greska = m.posaljiPin(pin); pin = "" }, enabled = !m.radi && pin.length == 4) { Text("Pošalji PIN") }
+    }
+    Text("L-PFR traži PIN. PIN se šalje jednom; posle 5 pogrešnih kartica se zaključava.", color = Color.DarkGray, fontSize = 12.sp)
+    greska?.let { Text(it, color = CRVENA, fontSize = 13.sp) }
+}
+
+/** Polje za tajnu (adresa sa tokenom, lozinka, PAC): skriveno dok se ne klikne „Prikaži“. */
+@Composable
+private fun TajnoPolje(vrednost: String, naziv: String, promena: (String) -> Unit, modifier: Modifier = Modifier.fillMaxWidth()) {
+    var vidljivo by remember { mutableStateOf(false) }
+    OutlinedTextField(
+        vrednost,
+        promena,
+        label = { Text(naziv) },
+        singleLine = true,
+        visualTransformation = if (vidljivo) VisualTransformation.None else PasswordVisualTransformation(),
+        trailingIcon = { TextButton(onClick = { vidljivo = !vidljivo }) { Text(if (vidljivo) "Sakrij" else "Prikaži", fontSize = 12.sp) } },
+        modifier = modifier,
+    )
+}
+
+/**
+ * Podešavanja kase: kasiri, L-PFR (adresa), V-PFR (sertifikat, lozinka, PAC) i papir u štampaču.
+ * Sve se čuva odmah, na računaru kase (ne u Git-u); posle promene PFR-a veza se ponovo proverava.
+ */
+@Composable
+private fun ColumnScope.PodesavanjaKase(m: EsirModel) {
+    Column(Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        m.porukaPodesavanja?.let { Text(it.tekst, color = if (it.greska) CRVENA else ZELENA, fontSize = 13.sp) }
+        KarticaKasira(m)
+        KarticaLpfr(m)
+        KarticaVpfr(m)
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("Štampač", fontWeight = FontWeight.SemiBold)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Papir:", fontSize = 13.sp)
+                    Izbor(SirinaPapira.entries, m.papir, { it.naziv }, kompaktno = true, naIzbor = m::izaberiPapir)
+                }
+                Text("Za sada virtuelni štampač: slika računa i ESC/POS bajtovi u folderu stampa/.", color = Color.Gray, fontSize = 12.sp)
+            }
+        }
+        Text("Podaci kase: ${m.folderPodataka}", color = Color.Gray, fontSize = 12.sp)
+    }
+}
+
+@Composable
+private fun KarticaKasira(m: EsirModel) {
+    var novi by remember { mutableStateOf("") }
+    var greska by remember { mutableStateOf<String?>(null) }
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("Kasiri", fontWeight = FontWeight.SemiBold)
+            Text("Ime izabranog kasira štampa se na računu („Касир“).", color = Color.Gray, fontSize = 12.sp)
+            m.podesavanja.kasiri.forEach { ime ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(ime, Modifier.weight(1f))
+                    TextButton(onClick = { m.ukloniKasira(ime) }) { Text("Ukloni", color = CRVENA) }
+                }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(novi, { novi = it; greska = null }, label = { Text("Ime kasira") }, singleLine = true, modifier = Modifier.weight(1f))
+                Button(onClick = {
+                    greska = m.dodajKasira(novi)
+                    if (greska == null) novi = ""
+                }) { Text("Dodaj") }
+            }
+            greska?.let { Text(it, color = CRVENA, fontSize = 13.sp) }
+        }
+    }
+}
+
+@Composable
+private fun KarticaLpfr(m: EsirModel) {
+    var adresa by remember(m.podesavanja.lpfr) { mutableStateOf(m.podesavanja.lpfr?.baseUrl.orEmpty()) }
+    var greska by remember { mutableStateOf<String?>(null) }
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("L-PFR (lokalni PFR)", fontWeight = FontWeight.SemiBold)
+            Text(
+                "Adresa L-PFR-a, završava se sa /api, npr. http://192.168.1.20:7555/api. " +
+                    "Adresa razvojnog L-PFR-a sa portala sadrži tajni token, zato je skrivena.",
+                color = Color.Gray,
+                fontSize = 12.sp,
+            )
+            TajnoPolje(adresa, "Adresa", { adresa = it; greska = null })
+            Row {
+                Spacer(Modifier.weight(1f))
+                Button(onClick = { greska = m.sacuvajLpfr(adresa) }) { Text("Sačuvaj L-PFR") }
+            }
+            greska?.let { Text(it, color = CRVENA, fontSize = 13.sp) }
+        }
+    }
+}
+
+@Composable
+private fun KarticaVpfr(m: EsirModel) {
+    val v = m.podesavanja.vpfr
+    var putanja by remember(v) { mutableStateOf(v?.pfxPath) }
+    var lozinka by remember(v) { mutableStateOf(v?.pfxPassword.orEmpty()) }
+    var pac by remember(v) { mutableStateOf(v?.pac.orEmpty()) }
+    var opis by remember(v) { mutableStateOf<String?>(null) }
+    var greska by remember(v) { mutableStateOf<String?>(null) }
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("V-PFR (virtuelni PFR Poreske uprave)", fontWeight = FontWeight.SemiBold)
+            Text("Sertifikat (.p12/.pfx) sa portala, lozinka i PAC. Adresa V-PFR-a se čita iz sertifikata.", color = Color.Gray, fontSize = 12.sp)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Sertifikat: ${putanja ?: "nije izabran"}", Modifier.weight(1f), fontSize = 13.sp)
+                OutlinedButton(onClick = {
+                    m.izaberiSertifikat()?.let { putanja = it; opis = null; greska = null }
+                }) { Text("Izaberi sertifikat") }
+            }
+            TajnoPolje(lozinka, "Lozinka sertifikata", { lozinka = it; opis = null; greska = null })
+            TajnoPolje(pac, "PAC", { pac = it; greska = null })
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = {
+                    val r = m.opisSertifikata(putanja, lozinka)
+                    opis = r.getOrNull()
+                    greska = r.exceptionOrNull()?.message
+                }) { Text("Proveri sertifikat") }
+                Spacer(Modifier.weight(1f))
+                Button(onClick = { greska = m.sacuvajVpfr(putanja, lozinka, pac) }) { Text("Sačuvaj V-PFR") }
+            }
+            opis?.let { Text(it, color = ZELENA, fontSize = 13.sp) }
+            greska?.let { Text(it, color = CRVENA, fontSize = 13.sp) }
         }
     }
 }

@@ -7,6 +7,7 @@ import kotlin.math.roundToInt
  * Širina termalnog papira. Termalni štampači imaju 8 tačaka po milimetru (203 dpi),
  * a štampaju uže od papira: 58 mm papir → 48 mm (384 tačke), 80 mm papir → 72 mm (576 tačaka).
  */
+@kotlinx.serialization.Serializable
 enum class SirinaPapira(val mm: Int, val tacaka: Int) {
     MM58(58, 384),
     MM80(80, 576),

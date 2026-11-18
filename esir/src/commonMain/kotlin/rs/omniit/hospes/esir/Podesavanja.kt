@@ -5,19 +5,50 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
 /**
- * Podešavanja ESIR-a iz `config/local.json`.
+ * Podešavanja kase iz `config/local.json` (komandna linija i aplikacija koriste isti fajl).
  *
  * Fajl sadrži tajne (token u adresi, PIN, lozinku, PAC), zato `toString()` nikad ne ispisuje te vrednosti.
+ * Fajl nije u Git-u.
  */
 @Serializable
 data class Podesavanja(
     val lpfr: LpfrPodesavanja? = null,
     val vpfr: VpfrPodesavanja? = null,
+    /** PFR sa kojim kasa radi; bez ovoga: L-PFR ako je podešen, inače V-PFR. */
+    val pfr: VrstaPfra? = null,
+    /** Kasiri ove kase; ime izabranog kasira štampa se na računu („Касир“). */
+    val kasiri: List<String> = emptyList(),
+    /** Papir u štampaču. */
+    val papir: SirinaPapira? = null,
 ) {
+    /** PFR koji se koristi kada nije izričito izabran. */
+    val izabraniPfr: VrstaPfra
+        get() = pfr ?: if (lpfr == null && vpfr != null) VrstaPfra.VPFR else VrstaPfra.LPFR
+
+    /** JSON za čuvanje (bez praznih polja). */
+    fun uJson(): String = jsonZaCuvanje.encodeToString(serializer(), this)
+
     companion object {
         private val json = Json { ignoreUnknownKeys = true }
+        private val jsonZaCuvanje = Json {
+            prettyPrint = true
+            explicitNulls = false
+        }
 
         fun izJsona(tekst: String): Podesavanja = json.decodeFromString(serializer(), tekst)
+    }
+}
+
+/** Pravila za ime kasira. */
+object Kasiri {
+    /** Najduže ime kasira koje se šalje PFR-u. */
+    const val MAKS_DUZINA = 50
+
+    /** Problem sa imenom kasira, ili `null` ako je ispravno. */
+    fun proveri(ime: String): String? = when {
+        ime.isBlank() -> "Unesi ime kasira"
+        ime.trim().length > MAKS_DUZINA -> "Ime kasira može da ima najviše $MAKS_DUZINA znakova"
+        else -> null
     }
 }
 

@@ -44,4 +44,30 @@ class PodesavanjaTest {
         assertFalse("TAJNIPAC" in tekst)
         assertTrue("devesdc.sandbox.suf.purs.gov.rs:8888" in tekst)
     }
+
+    @Test
+    fun kasiriPapirIIzborPfraSeCuvajuIUcitavaju() {
+        val p = Podesavanja.izJsona(ispravno).copy(kasiri = listOf("Marko", "Ana"), papir = SirinaPapira.MM58, pfr = VrstaPfra.VPFR)
+        val json = p.uJson()
+        assertEquals(p, Podesavanja.izJsona(json))
+        assertTrue("\"papir\": \"MM58\"" in json && "\"pfr\": \"VPFR\"" in json, json)
+        assertTrue("null" !in json, "prazna polja se ne upisuju")
+    }
+
+    @Test
+    fun stariFajlBezNovihPolja() {
+        val p = Podesavanja.izJsona(ispravno)
+        assertEquals(emptyList(), p.kasiri)
+        assertEquals(null, p.papir)
+        assertEquals(VrstaPfra.LPFR, p.izabraniPfr)
+        assertEquals(VrstaPfra.VPFR, Podesavanja(vpfr = VpfrPodesavanja(pfxPath = "x.p12")).izabraniPfr, "samo V-PFR je podešen")
+        assertEquals(VrstaPfra.LPFR, Podesavanja().izabraniPfr)
+    }
+
+    @Test
+    fun imeKasira() {
+        assertEquals("Unesi ime kasira", Kasiri.proveri("  "))
+        assertEquals("Ime kasira može da ima najviše 50 znakova", Kasiri.proveri("A".repeat(51)))
+        assertEquals(null, Kasiri.proveri("Marko Marković"))
+    }
 }
