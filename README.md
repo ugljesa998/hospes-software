@@ -48,6 +48,18 @@ Avansni tok (PURS uputstvo, poglavlje 9.1):
 
 Izdati računi se čuvaju u folderu `racuni/` (tekst računa, QR kod kao GIF, ceo odgovor PFR-a). Folder nije u Git-u.
 
+### L-PFR ili V-PFR
+
+Sve komande koje rade sa PFR-om primaju `--pfr lpfr` (podrazumevano) ili `--pfr vpfr`:
+
+```bash
+./gradlew -q :esir-cli:run --args="status --pfr vpfr"
+./gradlew -q :esir-cli:run --args="racun --pfr vpfr"
+```
+
+V-PFR traži u `config/local.json` deo `vpfr`: putanju do sertifikata (`.p12`/`.pfx`, iz arhive sa portala uzeti
+`*.chain.p12`), lozinku i PAC. Adresa V-PFR-a se čita iz samog sertifikata. V-PFR nema PIN.
+
 Kada komanda završi sa greškom, Gradle na kraju ispiše `BUILD FAILED`. To je očekivano: program je vratio kod greške.
 
 ## Pravilo za tajne

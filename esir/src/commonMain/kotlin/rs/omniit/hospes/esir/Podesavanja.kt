@@ -48,6 +48,17 @@ data class VpfrPodesavanja(
     val pfxPassword: String? = null,
     val pac: String? = null,
 ) {
+    /** Spisak problema u podešavanjima; prazan spisak znači da je sve u redu. Adresa nije obavezna (čita se iz sertifikata). */
+    fun proveri(): List<String> = buildList {
+        if (baseUrl != null && !baseUrl.startsWith("https://")) add("vpfr.baseUrl mora da počinje sa https://")
+        if (pfxPath.isNullOrBlank()) add("vpfr.pfxPath nije upisan (putanja do .p12/.pfx fajla)")
+        if (pfxPassword.isNullOrBlank()) add("vpfr.pfxPassword nije upisan")
+        if (pac.isNullOrBlank()) add("vpfr.pac nije upisan")
+        listOf(baseUrl, pfxPath, pfxPassword, pac).filterNotNull().forEach {
+            if ('<' in it) add("vpfr još sadrži primer vrednosti iz example.json")
+        }
+    }.distinct()
+
     override fun toString(): String =
         "VpfrPodesavanja(adresa=${baseUrl?.let(::bezbedanPrikazAdrese)}, pfxPath=$pfxPath, lozinka=****, pac=****)"
 }

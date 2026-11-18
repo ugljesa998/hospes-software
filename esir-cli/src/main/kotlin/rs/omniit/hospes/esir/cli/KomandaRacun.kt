@@ -1,12 +1,11 @@
 package rs.omniit.hospes.esir.cli
 
-import io.ktor.client.HttpClient
 import rs.omniit.hospes.esir.Decimal4
 import rs.omniit.hospes.esir.EsirGreska
 import rs.omniit.hospes.esir.EsirHttp
 import rs.omniit.hospes.esir.FiskalizovanRacun
 import rs.omniit.hospes.esir.IzdatRacun
-import rs.omniit.hospes.esir.LpfrVeza
+import rs.omniit.hospes.esir.PfrVeza
 import rs.omniit.hospes.esir.NacinPlacanja
 import rs.omniit.hospes.esir.Placanje
 import rs.omniit.hospes.esir.RezultatRacuna
@@ -16,9 +15,7 @@ import rs.omniit.hospes.esir.Stavka
 import rs.omniit.hospes.esir.TipTransakcije
 import rs.omniit.hospes.esir.VrstaRacuna
 import rs.omniit.hospes.esir.ZahtevZaRacun
-import rs.omniit.hospes.esir.bezbedanPrikazAdrese
 import rs.omniit.hospes.esir.naziv
-import rs.omniit.hospes.esir.napraviZaJvm
 import rs.omniit.hospes.esir.noviRequestId
 import java.io.File
 import java.util.Base64
@@ -40,11 +37,11 @@ internal suspend fun komandaRacun(argumenti: List<String>) {
     val nacinPlacanja = nacinPlacanja(argumenti) ?: NacinPlacanja.GOTOVINA
     val trazenaOznaka = vrednostOpcije(argumenti, "--oznaka") ?: "A"
 
-    saLpfrom { veza, status ->
+    saPfrom(argumenti) { veza, status ->
         val stope = status.currentTaxRates?.taxCategories.orEmpty().flatMap { it.taxRates }
         val stopa = stope.firstOrNull { it.label == trazenaOznaka }
             ?: prekini(
-                "Poreska oznaka $trazenaOznaka ne postoji u važećim stopama L-PFR-a. " +
+                "Poreska oznaka $trazenaOznaka ne postoji u važećim stopama PFR-a. " +
                     "Dostupne: ${stope.joinToString(", ") { "${it.label} (${it.rate}%)" }}",
             )
         val iznos = Decimal4.parse("300")
@@ -55,7 +52,7 @@ internal suspend fun komandaRacun(argumenti: List<String>) {
             items = listOf(Stavka("Test kafa", Decimal4.parse("1"), iznos, iznos, listOf(stopa.label))),
             cashier = "Hospes test",
         )
-        red("Poreska oznaka", "${stopa.label} (${stopa.rate}%, iz statusa L-PFR-a)")
+        red("Poreska oznaka", "${stopa.label} (${stopa.rate}%, iz statusa PFR-a)")
         izdajIPrikazi(
             veza, status, zahtev,
             "${vrsta.naziv} Prodaja: „Test kafa“ 1 × 300 RSD, ${nacinPlacanja.naziv.lowercase()}",
@@ -77,7 +74,7 @@ internal suspend fun komandaIzPredracuna(argumenti: List<String>) {
         prekini(e.message ?: e.toString())
     }
 
-    saLpfrom { veza, status ->
+    saPfrom(argumenti) { veza, status ->
         val nacini = zahtev.payment.joinToString(", ") { it.paymentType.naziv.lowercase() }
         izdajIPrikazi(veza, status, zahtev, "Promet Prodaja iz predračuna $broj, $nacini")
     }
@@ -109,7 +106,7 @@ internal suspend fun komandaRefundacija(argumenti: List<String>) {
         prekini(e.message ?: e.toString())
     }
 
-    saLpfrom { veza, status ->
+    saPfrom(argumenti) { veza, status ->
         izdajIPrikazi(veza, status, zahtev, "${zahtev.invoiceType.naziv} Refundacija za $broj, kupac $kupac")
     }
 }
@@ -124,7 +121,7 @@ internal suspend fun komandaKopija(argumenti: List<String>) {
         prekini(e.message ?: e.toString())
     }
 
-    saLpfrom { veza, status ->
+    saPfrom(argumenti) { veza, status ->
         izdajIPrikazi(veza, status, zahtev, "Kopija ${zahtev.transactionType.naziv} za $broj")
     }
 }
@@ -152,20 +149,22 @@ internal fun komandaLista() {
 
 /** `provera <RequestId>`: traži poslednji račun po RequestId, bez izdavanja novog. */
 internal suspend fun komandaProvera(argumenti: List<String>) {
-    val requestId = argumenti.getOrNull(1) ?: prekini("Upotreba: provera <RequestId>")
-    val podesavanja = ucitajLpfrPodesavanja()
+    val requestId = argumenti.getOrNull(1)?.takeUnless { it.startsWith("--") }
+        ?: prekini("Upotreba: provera <RequestId> [--pfr lpfr|vpfr]")
 
-    EsirHttp.napraviZaJvm().use { http ->
+    otvoriPfr(argumenti).use { otvorena ->
+        val veza = otvorena.veza
+        println(otvorena.opis)
         val racun = try {
-            LpfrVeza(podesavanja.baseUrl, http).racunPoRequestId(requestId)
+            veza.racunPoRequestId(requestId)
         } catch (e: EsirGreska) {
             prekini(e.message ?: e.toString())
         } catch (e: IllegalArgumentException) {
             prekini(e.message ?: e.toString())
         }
         if (racun == null) {
-            println("L-PFR nema račun sa RequestId $requestId.")
-            println("Napomena: L-PFR čuva samo poslednji račun, pa ova provera važi za poslednji izdati račun.")
+            println("${veza.naziv} nema račun sa RequestId $requestId.")
+            println("Napomena: PFR čuva samo poslednji račun, pa ova provera važi za poslednji izdati račun.")
         } else {
             println("Račun sa RequestId $requestId JESTE izdat.")
             ispisiRacun(racun)
@@ -173,14 +172,12 @@ internal suspend fun komandaProvera(argumenti: List<String>) {
     }
 }
 
-/** Učita podešavanja, otvori vezu, proveri status i PIN, pa izvrši [blok]. */
-internal suspend fun saLpfrom(blok: suspend (LpfrVeza, StatusOdgovor) -> Unit) {
-    val podesavanja = ucitajLpfrPodesavanja()
-    println("L-PFR: ${bezbedanPrikazAdrese(podesavanja.baseUrl)} (token iz adrese se ne ispisuje)")
-    println()
-
-    EsirHttp.napraviZaJvm().use { http: HttpClient ->
-        val veza = LpfrVeza(podesavanja.baseUrl, http)
+/** Otvori vezu sa izabranim PFR-om (`--pfr`), proveri status i PIN, pa izvrši [blok]. */
+internal suspend fun saPfrom(argumenti: List<String>, blok: suspend (PfrVeza, StatusOdgovor) -> Unit) {
+    otvoriPfr(argumenti).use { otvorena ->
+        println(otvorena.opis)
+        println()
+        val veza = otvorena.veza
         val status = try {
             veza.status()
         } catch (e: EsirGreska) {
@@ -199,13 +196,13 @@ internal suspend fun saLpfrom(blok: suspend (LpfrVeza, StatusOdgovor) -> Unit) {
  * @param dodatak redovi koje ESIR štampa ispod teksta PFR-a, a koji se ne šalju PFR-u (npr. kod avansa).
  */
 internal suspend fun izdajIPrikazi(
-    veza: LpfrVeza,
+    veza: PfrVeza,
     status: StatusOdgovor,
     zahtev: ZahtevZaRacun,
     opis: String,
     dodatak: List<String> = emptyList(),
 ): IzdatRacun {
-    val jezik = LpfrVeza.JEZIK_SRPSKI_CIRILICA.takeIf { it in status.supportedLanguages }
+    val jezik = PfrVeza.JEZIK_SRPSKI_CIRILICA.takeIf { it in status.supportedLanguages }
         ?: status.supportedLanguages.firstOrNull()
     val requestId = noviRequestId()
 
@@ -240,7 +237,7 @@ internal suspend fun izdajIPrikazi(
                     }
                 }
             } ?: rezultat.telo
-            prekini("L-PFR je odbio račun (HTTP ${rezultat.httpStatus}). Račun NIJE izdat.\n$opisGreske")
+            prekini("${veza.naziv} je odbio račun (HTTP ${rezultat.httpStatus}). Račun NIJE izdat.\n$opisGreske")
         }
         is RezultatRacuna.NijeIzdat ->
             prekini("Račun NIJE izdat: ${rezultat.razlog}. Bezbedno je pokušati ponovo.")
@@ -264,8 +261,8 @@ private fun ispisiRacun(racun: FiskalizovanRacun) {
     red("Link za proveru", racun.verificationUrl)
     red("Poruka PFR-a", racun.messages)
     println()
-    println("Tekst računa (journal), onako kako ga je vratio L-PFR:")
-    println(racun.journal ?: "(L-PFR nije vratio tekst računa)")
+    println("Tekst računa (journal), onako kako ga je vratio PFR:")
+    println(racun.journal ?: "(PFR nije vratio tekst računa)")
 }
 
 private const val NASLOV_DODATKA = "---- ESIR dodaje na odštampan račun (ne šalje se PFR-u) ----"

@@ -22,7 +22,7 @@ internal suspend fun komandaAvans(argumenti: List<String>) {
     val kupac = vrednostOpcije(argumenti, "--kupac")
     val prethodni = vrednostOpcije(argumenti, "--prethodni")?.let(::ucitajIzdat)
 
-    saLpfrom { veza, status ->
+    saPfrom(argumenti) { veza, status ->
         val stopa = stopaIzOpcije(argumenti, status)
         val sifra = sifraAvansa(argumenti, stopa)
         val zahtev = try {
@@ -61,7 +61,7 @@ internal suspend fun komandaZatvoriAvans(argumenti: List<String>) {
     }
 
     println("Lanac avansa (${lanac.size}): ${lanac.joinToString(" → ") { it.racun.invoiceNumber }}")
-    saLpfrom { veza, status ->
+    saPfrom(argumenti) { veza, status ->
         val ukupno = zahtev.items.fold(Decimal4.NULA) { a, s -> a + s.totalAmount }
         izdajIPrikazi(
             veza, status, zahtev,
@@ -83,7 +83,7 @@ internal suspend fun komandaKonacniRacun(argumenti: List<String>) {
     val nacin = nacinPlacanja(argumenti) ?: NacinPlacanja.PLATNA_KARTICA
     val zatvaranje = ucitajIzdat(broj)
 
-    saLpfrom { veza, status ->
+    saPfrom(argumenti) { veza, status ->
         val stopa = stopaIzOpcije(argumenti, status)
         val konacni = try {
             Avans.konacniRacun(

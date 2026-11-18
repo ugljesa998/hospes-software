@@ -5,7 +5,7 @@
   },
   "vpfr": {
     "baseUrl": "https://vsdc.sandbox.suf.purs.gov.rs",
-    "pfxPath": "config/<SERTIFIKAT>.pfx",
+    "pfxPath": "config/<SERTIFIKAT>.p12",
     "pfxPassword": "<LOZINKA>",
     "pac": "<PAC>"
   }

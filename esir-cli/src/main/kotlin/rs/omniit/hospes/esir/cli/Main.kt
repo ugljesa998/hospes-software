@@ -24,8 +24,8 @@ fun main(args: Array<String>) {
 
     when (val komanda = args.firstOrNull()) {
         null, "pomoc" -> ispisiPomoc()
-        "status" -> runBlocking { komandaStatus() }
-        "pin" -> runBlocking { komandaPin() }
+        "status" -> runBlocking { komandaStatus(args.toList()) }
+        "pin" -> runBlocking { komandaPin(args.toList()) }
         "racun" -> runBlocking { komandaRacun(args.toList()) }
         "refundacija" -> runBlocking { komandaRefundacija(args.toList()) }
         "kopija" -> runBlocking { komandaKopija(args.toList()) }
@@ -48,8 +48,10 @@ fun main(args: Array<String>) {
 private fun ispisiPomoc() {
     println(
         """
+        Sve komande koje rade sa PFR-om primaju --pfr lpfr (podrazumevano) ili --pfr vpfr.
+
         Komande:
-          status                              stanje L-PFR-a: dostupnost, PIN, šifre stanja, poreske stope
+          status                              stanje PFR-a: dostupnost, PIN, šifre stanja, poreske stope
           pin                                 PIN iz config/local.json (jednom, bez ponavljanja)
           racun [--vrsta obuka|promet|predracun] [--placanje gotovina] [--oznaka A]
                                               „Test kafa“ 1 × 300 RSD (podrazumevano Obuka, gotovina)
@@ -70,13 +72,16 @@ private fun ispisiPomoc() {
     )
 }
 
-internal fun ucitajLpfrPodesavanja(): LpfrPodesavanja {
+internal fun ucitajPodesavanja(): Podesavanja {
     val fajl = File(putanjaPodesavanja)
     if (!fajl.exists()) {
         prekini("Nema fajla ${fajl.path}. Kopiraj config/example.json u config/local.json i upiši vrednosti.")
     }
-    val lpfr = Podesavanja.izJsona(fajl.readText()).lpfr
-        ?: prekini("U ${fajl.path} nedostaje deo \"lpfr\".")
+    return Podesavanja.izJsona(fajl.readText())
+}
+
+internal fun ucitajLpfrPodesavanja(): LpfrPodesavanja {
+    val lpfr = ucitajPodesavanja().lpfr ?: prekini("U config/local.json nedostaje deo \"lpfr\".")
     val problemi = lpfr.proveri()
     if (problemi.isNotEmpty()) {
         prekini("Podešavanja nisu ispravna:\n" + problemi.joinToString("\n") { "  - $it" })
@@ -84,28 +89,29 @@ internal fun ucitajLpfrPodesavanja(): LpfrPodesavanja {
     return lpfr
 }
 
-private suspend fun komandaStatus() {
-    val podesavanja = ucitajLpfrPodesavanja()
-    println("L-PFR: ${bezbedanPrikazAdrese(podesavanja.baseUrl)} (token iz adrese se ne ispisuje)")
-    println()
-
-    EsirHttp.napraviZaJvm().use { http ->
-        val veza = LpfrVeza(podesavanja.baseUrl, http)
+private suspend fun komandaStatus(argumenti: List<String>) {
+    otvoriPfr(argumenti).use { otvorena ->
+        val veza = otvorena.veza
+        println(otvorena.opis)
+        println()
 
         val dostupan = veza.attention()
         red("Dostupan (attention)", if (dostupan) "da" else "NE")
-        if (!dostupan) prekini("L-PFR se ne javlja. Proveri internet i adresu u config/local.json.")
+        if (!dostupan) prekini("${veza.naziv} se ne javlja. Proveri internet i podešavanja u config/local.json.")
 
         val status = try {
             veza.status()
         } catch (e: EsirGreska) {
             prekini(e.message ?: e.toString())
         }
-        ispisiStatus(status)
+        ispisiStatus(status, veza.naziv)
     }
 }
 
-private suspend fun komandaPin() {
+private suspend fun komandaPin(argumenti: List<String>) {
+    if (vrednostOpcije(argumenti, "--pfr") == "vpfr") {
+        prekini("V-PFR nema PIN: prijava se radi sertifikatom i PAC-om.")
+    }
     val podesavanja = ucitajLpfrPodesavanja()
     val pin = podesavanja.pin ?: prekini("U config/local.json nije upisan lpfr.pin.")
     println("L-PFR: ${bezbedanPrikazAdrese(podesavanja.baseUrl)} (token iz adrese se ne ispisuje)")
@@ -156,13 +162,13 @@ private suspend fun komandaPin() {
     }
 }
 
-private fun ispisiStatus(s: StatusOdgovor) {
-    red("Vreme na L-PFR-u", s.sdcDateTime)
-    red("Kartica (UID)", s.uid)
-    red("Potreban PIN", s.isPinRequired?.let { if (it) "da" else "ne" })
+private fun ispisiStatus(s: StatusOdgovor, nazivPfra: String) {
+    red("Vreme na $nazivPfra-u", s.sdcDateTime)
+    red("Kartica/sertifikat", s.uid)
+    red("Potreban PIN", s.isPinRequired?.let { if (it) "da" else "ne" } ?: "ne postoji (V-PFR)".takeIf { nazivPfra == "V-PFR" })
     red("Potreban audit", s.auditRequired?.let { if (it) "da" else "ne" })
     red("Poslednji račun", s.lastInvoiceNumber)
-    red("L-PFR", listOfNotNull(s.make, s.model, s.softwareVersion).joinToString(" ").ifEmpty { null })
+    red("Uređaj", listOfNotNull(s.make, s.model, s.softwareVersion).joinToString(" ").ifEmpty { null })
     red("Jezici računa", s.supportedLanguages.joinToString(", ").ifEmpty { null })
 
     println()
@@ -177,7 +183,7 @@ private fun ispisiStatus(s: StatusOdgovor) {
     println()
     val grupa = s.currentTaxRates
     if (grupa == null) {
-        println("Poreske stope: L-PFR ih nije vratio")
+        println("Poreske stope: $nazivPfra ih nije vratio")
     } else {
         println("Poreske stope (važe od ${grupa.validFrom ?: "?"}, grupa ${grupa.groupId ?: "?"}):")
         grupa.taxCategories.sortedBy { it.orderId ?: Int.MAX_VALUE }.forEach { kategorija ->
