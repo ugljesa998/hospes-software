@@ -27,7 +27,11 @@ Gradle ne treba instalirati: `./gradlew` sam preuzima odgovarajuću verziju.
 ./gradlew :esir-cli:run         # pokretanje komandne linije (spisak komandi)
 ./gradlew -q :esir-cli:run --args="status"   # stanje L-PFR-a, šifre stanja, poreske stope
 ./gradlew -q :esir-cli:run --args="pin"      # PIN iz config/local.json, šalje se najviše jednom
+./gradlew -q :esir-cli:run --args="racun"    # Training Sale: „Test kafa“ 1 × 300 RSD, gotovina
+./gradlew -q :esir-cli:run --args="provera <RequestId>"   # da li je poslednji račun sa tim RequestId izdat
 ```
+
+Izdati računi se čuvaju u folderu `racuni/` (tekst računa, QR kod kao GIF, ceo odgovor PFR-a). Folder nije u Git-u.
 
 Kada komanda završi sa greškom, Gradle na kraju ispiše `BUILD FAILED`. To je očekivano: program je vratio kod greške.
 

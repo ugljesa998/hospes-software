@@ -26,6 +26,8 @@ fun main(args: Array<String>) {
         null, "pomoc" -> ispisiPomoc()
         "status" -> runBlocking { komandaStatus() }
         "pin" -> runBlocking { komandaPin() }
+        "racun" -> runBlocking { komandaRacun(args.toList()) }
+        "provera" -> runBlocking { komandaProvera(args.toList()) }
         else -> {
             println("Nepoznata komanda: $komanda")
             ispisiPomoc()
@@ -40,12 +42,13 @@ private fun ispisiPomoc() {
         Komande:
           status   provera L-PFR-a: dostupnost, PIN, šifre stanja, poreske stope
           pin      slanje PIN-a iz config/local.json (jednom, bez ponavljanja)
-          racun    izdavanje Training Sale računa (u izradi)
+          racun [--oznaka A]     izdaje Training Sale: „Test kafa“ 1 × 300 RSD, gotovina
+          provera <RequestId>    proverava da li je poslednji račun sa tim RequestId izdat
         """.trimIndent()
     )
 }
 
-private fun ucitajLpfrPodesavanja(): LpfrPodesavanja {
+internal fun ucitajLpfrPodesavanja(): LpfrPodesavanja {
     val fajl = File(putanjaPodesavanja)
     if (!fajl.exists()) {
         prekini("Nema fajla ${fajl.path}. Kopiraj config/example.json u config/local.json i upiši vrednosti.")
@@ -170,11 +173,11 @@ private fun vrsta(v: VrstaSifre) = when (v) {
     VrstaSifre.GRESKA -> "greška"
 }
 
-private fun red(naziv: String, vrednost: String?) {
+internal fun red(naziv: String, vrednost: String?) {
     println("${(naziv + ":").padEnd(22)}${vrednost ?: "-"}")
 }
 
-private fun prekini(poruka: String): Nothing {
+internal fun prekini(poruka: String): Nothing {
     System.err.println("Greška: $poruka")
     exitProcess(1)
 }
