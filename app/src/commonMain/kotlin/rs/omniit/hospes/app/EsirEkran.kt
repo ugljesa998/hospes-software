@@ -64,7 +64,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import rs.omniit.hospes.esir.Artikal
 import rs.omniit.hospes.esir.Esir
+import rs.omniit.hospes.esir.IzdatRacun
 import rs.omniit.hospes.esir.NacinPlacanja
+import rs.omniit.hospes.esir.SifarnikKupca
 import rs.omniit.hospes.esir.SirinaPapira
 import rs.omniit.hospes.esir.VrstaPfra
 import rs.omniit.hospes.esir.VrstaRacuna
@@ -346,6 +348,7 @@ private fun ColumnScope.DesnaStrana(m: EsirModel) {
                     izgled = it
                 }
             }
+            RadnjeRacuna(m, p.izdat)
             Spacer(Modifier.height(6.dp))
             Box(Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState())) {
                 val papir = izgled
@@ -370,6 +373,98 @@ private fun Papir(p: PrikazRacuna) {
                 }
                 RedRacuna(red)
             }
+        }
+    }
+}
+
+/**
+ * Radnje nad prikazanim računom: refundacija (prodaja vrste Promet, Obuka, Predračun) i kopija (vrsta Promet).
+ * Kopija se potvrđuje drugim klikom, jer se izdaje preko PFR-a i ostaje u žurnalu.
+ */
+@Composable
+private fun RadnjeRacuna(m: EsirModel, izdat: IzdatRacun) {
+    val broj = izdat.racun.invoiceNumber
+    var refundacija by remember(broj) { mutableStateOf(false) }
+    var potvrdaKopije by remember(broj) { mutableStateOf(false) }
+    var greska by remember(broj) { mutableStateOf<String?>(null) }
+    val refundiran = remember(broj, m.zurnal) { m.refundacijaZa(izdat) }
+    val mozeSlati = !m.radi && m.status != null
+    if (!izdat.mozeRefundacija && !izdat.mozeKopija) return
+
+    Spacer(Modifier.height(6.dp))
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        if (izdat.mozeRefundacija) {
+            if (refundiran != null) {
+                Text("Refundiran računom ${refundiran.racun.invoiceNumber}", color = Color.Gray, fontSize = 13.sp)
+            } else {
+                OutlinedButton(onClick = { refundacija = !refundacija; potvrdaKopije = false; greska = null }, enabled = mozeSlati) {
+                    Text("Refundacija")
+                }
+            }
+        }
+        if (izdat.mozeKopija) {
+            if (potvrdaKopije) {
+                Text("Izdati kopiju?", fontSize = 13.sp)
+                Button(onClick = { greska = m.izdajKopiju(izdat); potvrdaKopije = false }, enabled = mozeSlati) { Text("Da, izdaj kopiju") }
+                TextButton(onClick = { potvrdaKopije = false }) { Text("Ne") }
+            } else {
+                OutlinedButton(onClick = { potvrdaKopije = true; refundacija = false; greska = null }, enabled = mozeSlati) { Text("Kopija") }
+            }
+        }
+    }
+    if (m.status == null) Text("Za refundaciju i kopiju PFR mora biti dostupan (Osveži).", color = Color.Gray, fontSize = 12.sp)
+    if (refundacija && refundiran == null) {
+        Spacer(Modifier.height(6.dp))
+        PanelRefundacije(m, izdat) { refundacija = false }
+    }
+    greska?.let { Text(it, color = CRVENA, fontSize = 13.sp) }
+}
+
+/** Refundacija celog računa: šta se vraća, ID kupca koji prima novac (obavezno, PURS 9.6) i potvrda. */
+@Composable
+private fun PanelRefundacije(m: EsirModel, izdat: IzdatRacun, zatvori: () -> Unit) {
+    val ranije = izdat.zahtev.buyerId?.split(":", limit = 2)?.takeIf { it.size == 2 && it[0] in SifarnikKupca.idKupca }
+    var sifra by remember { mutableStateOf(ranije?.get(0) ?: "20") }
+    var broj by remember { mutableStateOf(ranije?.get(1) ?: "") }
+    var greska by remember { mutableStateOf<String?>(null) }
+    // Kopija za potpis kupca: samo kod refundacije računa vrste Promet plaćenog gotovinom (9.6).
+    val kopijaZaPotpis = izdat.mozeKopija && izdat.zahtev.payment.any { it.paymentType == NacinPlacanja.GOTOVINA }
+
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("Refundacija celog računa ${izdat.racun.invoiceNumber}", fontWeight = FontWeight.SemiBold)
+            Text(
+                "Vraća se ${izdat.ukupno.zaStampu()} RSD (" +
+                    izdat.zahtev.payment.joinToString { "${it.paymentType.naziv} ${it.amount.zaStampu()}" } +
+                    "), stavki: ${izdat.zahtev.items.size}",
+                fontSize = 13.sp,
+            )
+            Text("Kupac koji prima novac (obavezno):", fontSize = 13.sp)
+            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
+                Izbor(SifarnikKupca.idKupca.keys.toList(), sifra, { it }, kompaktno = true) { sifra = it; greska = null }
+            }
+            Text("$sifra: ${SifarnikKupca.idKupca[sifra].orEmpty()}", color = Color.DarkGray, fontSize = 12.sp)
+            OutlinedTextField(broj, { broj = it; greska = null }, label = { Text("Broj") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            if (kopijaZaPotpis) {
+                Text(
+                    "Gotovina: odmah posle refundacije izdaje se i Kopija sa redom za potpis kupca. Kupac je potpisuje i ona ostaje u radnji.",
+                    color = Color.DarkGray,
+                    fontSize = 12.sp,
+                )
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = zatvori) { Text("Odustani") }
+                Spacer(Modifier.weight(1f))
+                Button(
+                    onClick = {
+                        greska = m.refundiraj(izdat, sifra, broj)
+                        if (greska == null) zatvori()
+                    },
+                    enabled = !m.radi && m.status != null,
+                    colors = ButtonDefaults.buttonColors(containerColor = CRVENA),
+                ) { Text("Izdaj refundaciju") }
+            }
+            greska?.let { Text(it, color = CRVENA, fontSize = 13.sp) }
         }
     }
 }

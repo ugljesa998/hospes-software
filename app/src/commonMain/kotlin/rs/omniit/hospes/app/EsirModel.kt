@@ -26,6 +26,7 @@ import rs.omniit.hospes.esir.PoreskaStopa
 import rs.omniit.hospes.esir.RezultatPina
 import rs.omniit.hospes.esir.RezultatRacuna
 import rs.omniit.hospes.esir.SirinaPapira
+import rs.omniit.hospes.esir.SifarnikKupca
 import rs.omniit.hospes.esir.SifreStanja
 import rs.omniit.hospes.esir.StatusOdgovor
 import rs.omniit.hospes.esir.Stavka
@@ -35,13 +36,17 @@ import rs.omniit.hospes.esir.VrstaRacuna
 import rs.omniit.hospes.esir.ZahtevZaRacun
 import rs.omniit.hospes.esir.noviRequestId
 import rs.omniit.hospes.esir.poSifriIliGtinu
+import rs.omniit.hospes.esir.redZaPotpisKupca
+import rs.omniit.hospes.esir.refundacijaZa
 import rs.omniit.hospes.esir.uvezi
 
 /** Poruka korisniku ispod obračuna. */
 data class Poruka(val tekst: String, val greska: Boolean)
 
-/** Račun prikazan desno: broj, tekst (PFR + ESIR dodatak) i QR kod. */
-data class PrikazRacuna(val broj: String, val naslov: String, val tekst: String, val qr: ByteArray?)
+/** Račun prikazan desno: izdat račun iz žurnala, tekst (PFR + ESIR dodatak) i QR kod. */
+data class PrikazRacuna(val izdat: IzdatRacun, val naslov: String, val tekst: String, val qr: ByteArray?) {
+    val broj: String get() = izdat.racun.invoiceNumber
+}
 
 /**
  * Stanje i radnje ESIR test ekrana. Sva fiskalna pravila su u ESIR modulu; ovde je samo povezivanje sa ekranom.
@@ -271,34 +276,111 @@ class EsirModel(private val okruzenje: Okruzenje, private val scope: CoroutineSc
         val dodatak = if (naplata.kusur > Decimal4.NULA) listOf("Повраћај:" + naplata.kusur.zaStampu().padStart(31)) else emptyList()
 
         posao { veza ->
-            val jezik = PfrVeza.JEZIK_SRPSKI_CIRILICA.takeIf { it in status?.supportedLanguages.orEmpty() }
-                ?: status?.supportedLanguages?.firstOrNull()
-            val requestId = noviRequestId()
-            poruka = when (val r = veza.izdajRacun(zahtev, requestId, jezik)) {
-                is RezultatRacuna.Izdat -> {
-                    val izdat = IzdatRacun(requestId, zahtev, r.racun)
-                    okruzenje.zurnal.sacuvaj(izdat, dodatak)
-                    prikazi(izdat)
-                    stavke.clear()
-                    primljeno = ""
-                    ucitajZurnal()
-                    val naknadno = if (r.pronadjenNaknadno) " (pronađen po RequestId posle prekida veze)" else ""
-                    val broj = r.racun.invoiceNumber
-                    try {
-                        val stampa = withContext(Dispatchers.IO) { okruzenje.stampaj(broj, papir) }
-                        Poruka("Račun $broj je izdat$naknadno. $stampa", greska = false)
-                    } catch (e: Exception) {
-                        Poruka("Račun $broj JE izdat$naknadno (ne izdaji ga ponovo), ali štampa nije uspela: ${e.message ?: e}", greska = true)
-                    }
-                }
-                is RezultatRacuna.Odbijen -> {
-                    val sifre = r.greska?.modelState.orEmpty().flatMap { p -> p.errors.map { "${p.property}: $it ${SifreStanja.za(it).opis}" } }
-                    Poruka("${veza.naziv} je odbio račun (HTTP ${r.httpStatus}). ${sifre.joinToString("; ")}", greska = true)
-                }
-                is RezultatRacuna.NijeIzdat -> Poruka("Račun NIJE izdat: ${r.razlog}", greska = true)
-                is RezultatRacuna.NepoznatoStanje ->
-                    Poruka("NE ZNA SE da li je račun izdat (RequestId ${r.requestId}). Ne izdaji ponovo pre provere.", greska = true)
+            val rezultat = izdajZahtev(veza, zahtev, dodatak)
+            poruka = rezultat.poruka
+            if (rezultat.izdat != null) {
+                stavke.clear()
+                primljeno = ""
             }
+        }
+    }
+
+    /** Refundacija koja je već izdata za ovaj račun, ili `null` (isti račun se ne refundira dvaput). */
+    fun refundacijaZa(izdat: IzdatRacun): IzdatRacun? = okruzenje.zurnal.refundacijaZa(izdat.racun.invoiceNumber)
+
+    /**
+     * Refundacija celog računa (PURS uputstvo 9.6), uz ID kupca koji prima novac (šifra iz šifarnika 9.8 i broj).
+     * Posle refundacije **gotovine** odmah se izdaje i Kopija Refundacije sa redom za potpis kupca; ona ostaje u radnji.
+     * Vraća grešku unosa (ništa nije poslato PFR-u) ili `null` ako je rad sa PFR-om započet.
+     */
+    fun refundiraj(original: IzdatRacun, sifraKupca: String, brojKupca: String): String? {
+        if (brojKupca.isBlank()) return "Unesi broj (${SifarnikKupca.idKupca[sifraKupca] ?: "dokument kupca"})"
+        val id = "$sifraKupca:${brojKupca.trim()}"
+        SifarnikKupca.proveriIdKupca(id)?.let { return it }
+        refundacijaZa(original)?.let {
+            return "Račun ${original.racun.invoiceNumber} je već refundiran računom ${it.racun.invoiceNumber}"
+        }
+        val zahtev = try {
+            original.zahtevZaRefundaciju(id, original.zahtev.buyerCostCenterId.takeIf { id == original.zahtev.buyerId })
+        } catch (e: IllegalArgumentException) {
+            return e.message ?: "Račun nije moguće refundirati"
+        }
+
+        posao { veza ->
+            val refundacija = izdajZahtev(veza, zahtev)
+            poruka = refundacija.poruka
+            val izdata = refundacija.izdat ?: return@posao
+            val kopija = izdata.takeIf { it.mozeKopija }?.zahtevZaKopiju() ?: return@posao
+            val potpis = kopija.redZaPotpisKupca() ?: return@posao
+
+            val zaPotpis = try {
+                izdajZahtev(veza, kopija, listOf(potpis))
+            } catch (e: EsirGreska) {
+                Izdavanje(null, Poruka(e.message ?: e.toString(), greska = true))
+            }
+            poruka = if (zaPotpis.izdat != null) {
+                Poruka(
+                    "${refundacija.poruka.tekst} ${zaPotpis.poruka.tekst} Kupac potpisuje kopiju; ona ostaje u radnji.",
+                    greska = refundacija.poruka.greska || zaPotpis.poruka.greska,
+                )
+            } else {
+                Poruka(
+                    "${refundacija.poruka.tekst} Kopija za potpis kupca NIJE izdata: ${zaPotpis.poruka.tekst} " +
+                        "Izdaj je dugmetom „Kopija“ na računu ${izdata.racun.invoiceNumber}.",
+                    greska = true,
+                )
+            }
+        }
+        return null
+    }
+
+    /**
+     * Kopija računa vrste Promet (prodaje ili refundacije); kod gotovinske refundacije sa redom za potpis kupca (9.6).
+     * Vraća grešku (ništa nije poslato PFR-u) ili `null` ako je rad sa PFR-om započet.
+     */
+    fun izdajKopiju(original: IzdatRacun): String? {
+        val zahtev = try {
+            original.zahtevZaKopiju()
+        } catch (e: IllegalArgumentException) {
+            return e.message ?: "Za ovaj račun se ne izdaje kopija"
+        }
+        posao { veza -> poruka = izdajZahtev(veza, zahtev, listOfNotNull(zahtev.redZaPotpisKupca())).poruka }
+        return null
+    }
+
+    /** Ishod slanja jednog zahteva PFR-u: izdat račun (ili `null`) i poruka za kasira. */
+    private class Izdavanje(val izdat: IzdatRacun?, val poruka: Poruka)
+
+    /** Šalje zahtev PFR-u; izdat račun upisuje u žurnal, prikazuje i štampa (jednom). */
+    private suspend fun izdajZahtev(veza: PfrVeza, zahtev: ZahtevZaRacun, dodatak: List<String> = emptyList()): Izdavanje {
+        val jezik = PfrVeza.JEZIK_SRPSKI_CIRILICA.takeIf { it in status?.supportedLanguages.orEmpty() }
+            ?: status?.supportedLanguages?.firstOrNull()
+        val requestId = noviRequestId()
+        return when (val r = veza.izdajRacun(zahtev, requestId, jezik)) {
+            is RezultatRacuna.Izdat -> {
+                val izdat = IzdatRacun(requestId, zahtev, r.racun)
+                okruzenje.zurnal.sacuvaj(izdat, dodatak)
+                prikazi(izdat)
+                ucitajZurnal()
+                val naknadno = if (r.pronadjenNaknadno) " (pronađen po RequestId posle prekida veze)" else ""
+                val opis = "Račun ${r.racun.invoiceNumber} (${izdat.oznaka})"
+                val poruka = try {
+                    val stampa = withContext(Dispatchers.IO) { okruzenje.stampaj(r.racun.invoiceNumber, papir) }
+                    Poruka("$opis je izdat$naknadno. $stampa", greska = false)
+                } catch (e: Exception) {
+                    Poruka("$opis JE izdat$naknadno (ne izdaji ga ponovo), ali štampa nije uspela: ${e.message ?: e}", greska = true)
+                }
+                Izdavanje(izdat, poruka)
+            }
+            is RezultatRacuna.Odbijen -> {
+                val sifre = r.greska?.modelState.orEmpty().flatMap { p -> p.errors.map { "${p.property}: $it ${SifreStanja.za(it).opis}" } }
+                Izdavanje(null, Poruka("${veza.naziv} je odbio račun (HTTP ${r.httpStatus}). ${sifre.joinToString("; ")}", greska = true))
+            }
+            is RezultatRacuna.NijeIzdat -> Izdavanje(null, Poruka("Račun NIJE izdat: ${r.razlog}", greska = true))
+            is RezultatRacuna.NepoznatoStanje -> Izdavanje(
+                null,
+                Poruka("NE ZNA SE da li je račun izdat (RequestId ${r.requestId}). Ne izdaji ponovo pre provere.", greska = true),
+            )
         }
     }
 
@@ -311,7 +393,7 @@ class EsirModel(private val okruzenje: Okruzenje, private val scope: CoroutineSc
     fun prikazi(izdat: IzdatRacun) {
         val broj = izdat.racun.invoiceNumber
         prikazan = PrikazRacuna(
-            broj = broj,
+            izdat = izdat,
             naslov = "$broj · ${izdat.oznaka}",
             tekst = okruzenje.tekstRacuna(broj) ?: izdat.racun.journal ?: "(nema teksta računa)",
             qr = izdat.racun.verificationQRCode?.let(::dekodirajBase64),

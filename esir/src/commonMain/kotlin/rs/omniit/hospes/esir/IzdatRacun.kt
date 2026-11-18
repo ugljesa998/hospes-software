@@ -16,6 +16,13 @@ data class IzdatRacun(
 ) {
     val oznaka: String get() = "${zahtev.invoiceType.naziv} ${zahtev.transactionType.naziv}"
 
+    /** Da li se ovaj račun može refundirati kroz [zahtevZaRefundaciju] (prodaja vrste Promet, Obuka ili Predračun). */
+    val mozeRefundacija: Boolean
+        get() = zahtev.transactionType == TipTransakcije.PRODAJA && zahtev.invoiceType in VRSTE_ZA_REFUNDACIJU
+
+    /** Da li se za ovaj račun izdaje kopija kroz [zahtevZaKopiju] (vrsta Promet, prodaja ili refundacija). */
+    val mozeKopija: Boolean get() = zahtev.invoiceType == VrstaRacuna.PROMET
+
     /**
      * Zahtev za refundaciju celog ovog računa (PURS uputstvo, 9.6): iste stavke i plaćanja,
      * uz poziv na ovaj račun i ID kupca koji prima novac.
@@ -24,7 +31,7 @@ data class IzdatRacun(
      */
     fun zahtevZaRefundaciju(idKupca: String, opcionoPoljeKupca: String? = null): ZahtevZaRacun {
         require(zahtev.transactionType == TipTransakcije.PRODAJA) { "Refundira se samo račun prodaje, a ovo je $oznaka" }
-        require(zahtev.invoiceType in VRSTE_ZA_REFUNDACIJU) {
+        require(mozeRefundacija) {
             "Refundacija je podržana za Promet, Obuku i Predračun, a ovo je $oznaka"
         }
         return zahtev.copy(
@@ -42,7 +49,7 @@ data class IzdatRacun(
      * isti tip transakcije, uz poziv na ovaj račun. Kopija se izdaje za račun vrste Promet.
      */
     fun zahtevZaKopiju(): ZahtevZaRacun {
-        require(zahtev.invoiceType == VrstaRacuna.PROMET) { "Kopija se izdaje za račun vrste Promet, a ovo je $oznaka" }
+        require(mozeKopija) { "Kopija se izdaje za račun vrste Promet, a ovo je $oznaka" }
         return zahtev.copy(
             invoiceType = VrstaRacuna.KOPIJA,
             referentDocumentNumber = racun.invoiceNumber,

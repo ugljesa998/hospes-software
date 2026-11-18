@@ -111,4 +111,32 @@ class RefundacijaIKopijaTest {
         val json = Json.encodeToString(IzdatRacun.serializer(), original)
         assertEquals(original, EsirHttp.json.decodeFromString(IzdatRacun.serializer(), json))
     }
+
+    @Test
+    fun dozvoljeneRadnjeZaRacun() {
+        val promet = izdat(prodaja)
+        assertTrue(promet.mozeRefundacija && promet.mozeKopija)
+        val obuka = izdat(prodaja.copy(invoiceType = VrstaRacuna.OBUKA))
+        assertTrue(obuka.mozeRefundacija && !obuka.mozeKopija, "kopija se izdaje samo za Promet")
+        val refundacija = izdat(promet.zahtevZaRefundaciju("20:123456789"), "X-Y-6")
+        assertTrue(!refundacija.mozeRefundacija && refundacija.mozeKopija, "kopija refundacije da, refundacija refundacije ne")
+        val avans = izdat(prodaja.copy(invoiceType = VrstaRacuna.AVANS))
+        assertTrue(!avans.mozeRefundacija && !avans.mozeKopija, "avans ima svoj tok (9.1)")
+    }
+
+    @Test
+    fun zurnalZnaDaJeRacunVecRefundiran() {
+        val zurnal = ZurnalUMemoriji()
+        val original = izdat(prodaja, "X-Y-1")
+        zurnal.sacuvaj(original)
+        assertNull(zurnal.refundacijaZa("X-Y-1"))
+
+        val refundacija = izdat(original.zahtevZaRefundaciju("20:123456789"), "X-Y-2")
+        zurnal.sacuvaj(refundacija)
+        zurnal.sacuvaj(izdat(refundacija.zahtevZaKopiju(), "X-Y-3"))
+        zurnal.sacuvaj(izdat(original.zahtevZaKopiju(), "X-Y-4"))
+
+        assertEquals("X-Y-2", zurnal.refundacijaZa("X-Y-1")?.racun?.invoiceNumber, "kopije se ne računaju")
+        assertNull(zurnal.refundacijaZa("X-Y-2"))
+    }
 }

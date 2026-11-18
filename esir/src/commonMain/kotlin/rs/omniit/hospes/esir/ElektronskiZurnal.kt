@@ -66,6 +66,16 @@ data class FilterZurnala(
 }
 
 /** Dan izdavanja po PFR vremenu (`gggg-mm-dd`), ili `null` ako PFR nije vratio vreme. */
+/**
+ * Refundacija koja je već izdata za račun [brojRacuna] (ne računa se kopija refundacije), ili `null`.
+ * Služi da se isti račun ne refundira dvaput.
+ */
+fun ElektronskiZurnal.refundacijaZa(brojRacuna: String): IzdatRacun? = svi().firstOrNull {
+    it.zahtev.transactionType == TipTransakcije.REFUNDACIJA &&
+        it.zahtev.invoiceType != VrstaRacuna.KOPIJA &&
+        it.zahtev.referentDocumentNumber == brojRacuna
+}
+
 val IzdatRacun.datum: String? get() = racun.sdcDateTime?.take(10)?.takeIf { it.length == 10 }
 
 /** Ukupan iznos računa: iz odgovora PFR-a, a ako ga nema, zbir stavki. */

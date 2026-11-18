@@ -30,6 +30,9 @@ Ekran: izbor L-PFR/V-PFR, stanje i PIN, stavke iz kataloga (klik, pretraga, bar-
 (količina, cena, popust, poreska oznaka iz PFR-a), plaćanje i kusur, izdavanje računa, prikaz računa sa QR kodom,
 elektronski žurnal za 30 dana i katalog artikala (novi artikal, izmena i cena, pretraga, uvoz i izvoz CSV).
 Posle izdavanja račun se štampa jednom, na izabranom papiru (58 ili 80 mm); desno se vidi „Tekst“ ili tačan izgled na papiru.
+Refundacija i kopija: u žurnalu izaberi račun, pa „Refundacija“ (ceo račun, uz ID kupca po šifarniku 9.8) ili „Kopija“.
+Posle refundacije gotovinom (vrsta Promet) aplikacija odmah izdaje i Kopiju sa redom za potpis kupca (9.6).
+Isti račun se ne može refundirati dvaput.
 Koristi isti `config/local.json`, isti žurnal (`racuni/`) i isti katalog (`podaci/katalog.json`) kao komandna linija.
 
 Ako je aplikacija upaljena, zatvori je pre `./gradlew build`, pa je posle ponovo pokreni.

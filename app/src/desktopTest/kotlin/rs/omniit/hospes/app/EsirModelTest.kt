@@ -43,6 +43,14 @@ class EsirModelTest {
     """
 
     private val zahtevi = mutableListOf<HttpRequestData>()
+    private var brojRacuna = 0
+
+    /** Telo zahteva za račun, kako ga je ESIR poslao PFR-u. */
+    private fun poslatiRacuni() = zahtevi.filter { it.url.encodedPath.endsWith("/invoices") }.map {
+        Json.parseToJsonElement((it.body as OutgoingContent.ByteArrayContent).bytes().decodeToString()).jsonObject
+    }
+
+    private fun kotlinx.serialization.json.JsonObject.tekst(polje: String) = this[polje]?.jsonPrimitive?.content
     private val odstampano = mutableListOf<Pair<String, SirinaPapira>>()
     private var stampacRadi = true
 
@@ -71,7 +79,8 @@ class EsirModelTest {
                     when {
                         z.url.encodedPath.endsWith("/attention") -> respond("", HttpStatusCode.OK)
                         z.url.encodedPath.endsWith("/status") -> respond(status, HttpStatusCode.OK, json)
-                        z.url.encodedPath.endsWith("/invoices") -> respond(izdat, HttpStatusCode.OK, json)
+                        z.url.encodedPath.endsWith("/invoices") ->
+                            respond(izdat.replace("TEST1234-TEST1234-1", "TEST1234-TEST1234-${++brojRacuna}"), HttpStatusCode.OK, json)
                         else -> respond("", HttpStatusCode.NotFound)
                     }
                 },
@@ -100,7 +109,7 @@ class EsirModelTest {
         m.izdaj()
         m.poslednjiPosao!!.join()
 
-        assertEquals("Račun TEST1234-TEST1234-1 je izdat. Odštampan na test štampaču.", m.poruka?.tekst)
+        assertEquals("Račun TEST1234-TEST1234-1 (Promet Prodaja) je izdat. Odštampan na test štampaču.", m.poruka?.tekst)
         assertFalse(m.poruka!!.greska)
         assertEquals(listOf("TEST1234-TEST1234-1" to SirinaPapira.MM80), odstampano, "štampa se jednom, odmah posle izdavanja")
         assertTrue(m.stavke.isEmpty(), "posle izdavanja obračun je prazan")
@@ -192,8 +201,92 @@ class EsirModelTest {
 
         val poruka = assertNotNull(m.poruka)
         assertTrue(poruka.greska)
-        assertEquals("Račun TEST1234-TEST1234-1 JE izdat (ne izdaji ga ponovo), ali štampa nije uspela: nema papira", poruka.tekst)
+        assertEquals("Račun TEST1234-TEST1234-1 (Obuka Prodaja) JE izdat (ne izdaji ga ponovo), ali štampa nije uspela: nema papira", poruka.tekst)
         assertEquals(1, okruzenje.zurnal.svi().size, "račun je u žurnalu")
         assertTrue(m.stavke.isEmpty())
+    }
+
+    /** Izdaje račun sa jednom stavkom i vraća ga iz žurnala. */
+    private suspend fun EsirModel.izdajProbni(vrsta: VrstaRacuna, nacin: NacinPlacanja = NacinPlacanja.GOTOVINA): rs.omniit.hospes.esir.IzdatRacun {
+        if (status == null) {
+            osvezi()
+            poslednjiPosao!!.join()
+        }
+        assertNull(dodajStavku("Kafa", "3", "250", "A", "10"))
+        vrstaRacuna = vrsta
+        nacinPlacanja = nacin
+        izdaj()
+        poslednjiPosao!!.join()
+        return assertNotNull(okruzenje.zurnal.nadji("TEST1234-TEST1234-$brojRacuna"))
+    }
+
+    @Test
+    fun refundacijaGotovineIKopijaZaPotpisKupca() = runTest {
+        val m = EsirModel(okruzenje, this)
+        val original = m.izdajProbni(VrstaRacuna.PROMET)
+
+        assertEquals("Unesi broj (Broj lične karte (domaće fizičko lice))", m.refundiraj(original, "20", " "))
+        assertTrue(m.refundiraj(original, "99", "123")!!.contains("nepoznata šifra 99"))
+        assertEquals(1, poslatiRacuni().size, "neispravan unos ne ide PFR-u")
+
+        assertNull(m.refundiraj(original, "20", " 123456789 "))
+        m.poslednjiPosao!!.join()
+
+        val (_, refundacija, kopija) = poslatiRacuni()
+        assertEquals("Normal", refundacija.tekst("invoiceType"))
+        assertEquals("Refund", refundacija.tekst("transactionType"))
+        assertEquals("20:123456789", refundacija.tekst("buyerId"))
+        assertEquals("TEST1234-TEST1234-1", refundacija.tekst("referentDocumentNumber"))
+        assertEquals("Copy", kopija.tekst("invoiceType"), "posle gotovinske refundacije: kopija za potpis (9.6)")
+        assertEquals("Refund", kopija.tekst("transactionType"))
+        assertEquals("TEST1234-TEST1234-2", kopija.tekst("referentDocumentNumber"))
+        assertEquals("20:123456789", kopija.tekst("buyerId"))
+
+        assertEquals(listOf("TEST1234-TEST1234-1", "TEST1234-TEST1234-2", "TEST1234-TEST1234-3"), odstampano.map { it.first })
+        val poruka = assertNotNull(m.poruka)
+        assertFalse(poruka.greska, poruka.tekst)
+        assertTrue("TEST1234-TEST1234-2 (Promet Refundacija) je izdat" in poruka.tekst, poruka.tekst)
+        assertTrue("TEST1234-TEST1234-3 (Kopija Refundacija) je izdat" in poruka.tekst, poruka.tekst)
+        assertEquals("TEST1234-TEST1234-3", m.prikazan?.broj, "prikazana je kopija za potpis")
+
+        assertEquals("TEST1234-TEST1234-2", m.refundacijaZa(original)?.racun?.invoiceNumber)
+        assertEquals(
+            "Račun TEST1234-TEST1234-1 je već refundiran računom TEST1234-TEST1234-2",
+            m.refundiraj(original, "20", "123456789"),
+        )
+        assertEquals(3, poslatiRacuni().size, "drugi put se ne šalje")
+    }
+
+    @Test
+    fun refundacijaKarticomIObukeBezKopije() = runTest {
+        val m = EsirModel(okruzenje, this)
+        val karticom = m.izdajProbni(VrstaRacuna.PROMET, NacinPlacanja.PLATNA_KARTICA)
+        assertNull(m.refundiraj(karticom, "10", "123456789"))
+        m.poslednjiPosao!!.join()
+        assertEquals(2, poslatiRacuni().size, "kartica: bez kopije za potpis")
+
+        val obuka = m.izdajProbni(VrstaRacuna.OBUKA)
+        assertNull(m.refundiraj(obuka, "20", "1"))
+        m.poslednjiPosao!!.join()
+        assertEquals(4, poslatiRacuni().size, "obuka: bez kopije")
+        assertEquals("Training", poslatiRacuni().last().tekst("invoiceType"))
+        assertEquals("Refund", poslatiRacuni().last().tekst("transactionType"))
+    }
+
+    @Test
+    fun kopijaSamoZaPromet() = runTest {
+        val m = EsirModel(okruzenje, this)
+        val obuka = m.izdajProbni(VrstaRacuna.OBUKA)
+        assertEquals("Kopija se izdaje za račun vrste Promet, a ovo je Obuka Prodaja", m.izdajKopiju(obuka))
+        assertEquals(1, poslatiRacuni().size)
+
+        val promet = m.izdajProbni(VrstaRacuna.PROMET)
+        assertNull(m.izdajKopiju(promet))
+        m.poslednjiPosao!!.join()
+        val kopija = poslatiRacuni().last()
+        assertEquals("Copy", kopija.tekst("invoiceType"))
+        assertEquals("Sale", kopija.tekst("transactionType"))
+        assertEquals(promet.racun.invoiceNumber, kopija.tekst("referentDocumentNumber"))
+        assertTrue(m.poruka!!.tekst.contains("(Kopija Prodaja) je izdat"), m.poruka!!.tekst)
     }
 }
