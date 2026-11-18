@@ -45,6 +45,51 @@ data class IzdatRacun(
     }
 
     /**
+     * Koliko je od svake stavke ovog računa još ostalo za refundaciju posle već izdatih [refundacije]
+     * (redom kao stavke računa). Refundirana stavka se vezuje za stavku računa po nazivu, ceni i oznakama;
+     * ako je ista stavka na računu dvaput, vraćena količina se troši redom.
+     */
+    fun preostaloZaRefundaciju(refundacije: List<IzdatRacun>): List<Decimal4> {
+        val vraceno = mutableMapOf<Triple<String, Decimal4, List<String>>, Decimal4>()
+        refundacije.flatMap { it.zahtev.items }.forEach { s ->
+            vraceno[s.kljuc] = (vraceno[s.kljuc] ?: Decimal4.NULA) + s.quantity
+        }
+        return zahtev.items.map { s ->
+            val ostatakVracenog = vraceno[s.kljuc] ?: Decimal4.NULA
+            val uzeto = if (ostatakVracenog < s.quantity) ostatakVracenog else s.quantity
+            vraceno[s.kljuc] = ostatakVracenog - uzeto
+            s.quantity - uzeto
+        }
+    }
+
+    /**
+     * Zahtev za refundaciju **dela** ovog računa (gost vrati jedno piće od pet): [kolicine] po stavkama, redom kao
+     * stavke računa (0 = ta stavka se ne vraća). Jedinična cena ostaje kao na računu, a novac se vraća načinom [nacin].
+     *
+     * @param preostalo koliko je od svake stavke još ostalo ([preostaloZaRefundaciju]); više od toga se ne vraća.
+     */
+    fun zahtevZaDelimicnuRefundaciju(
+        idKupca: String,
+        kolicine: List<Decimal4>,
+        nacin: NacinPlacanja,
+        preostalo: List<Decimal4> = zahtev.items.map { it.quantity },
+        opcionoPoljeKupca: String? = null,
+    ): ZahtevZaRacun {
+        val osnova = zahtevZaRefundaciju(idKupca, opcionoPoljeKupca)
+        require(kolicine.size == zahtev.items.size && preostalo.size == zahtev.items.size) { "Količine moraju da prate stavke računa" }
+        val stavke = zahtev.items.indices.mapNotNull { i ->
+            val s = zahtev.items[i]
+            val q = kolicine[i]
+            require(q >= Decimal4.NULA) { "Količina ne sme biti negativna" }
+            require(q.brojDecimala <= 3) { "Količina može da ima najviše 3 decimale" }
+            require(q <= preostalo[i]) { "„${s.name}“: može da se vrati najviše ${preostalo[i]}, a traži se $q" }
+            if (q == Decimal4.NULA) null else s.copy(quantity = q, totalAmount = (s.unitPrice * q).zaokruzi(2))
+        }
+        require(stavke.isNotEmpty()) { "Izaberi bar jednu stavku i količinu za refundaciju" }
+        return osnova.copy(items = stavke, payment = listOf(Placanje(Obracun.ukupno(stavke), nacin)))
+    }
+
+    /**
      * Zahtev za kopiju ovog računa: iste stavke, plaćanja i kupac, vrsta „Kopija“,
      * isti tip transakcije, uz poziv na ovaj račun. Kopija se izdaje za račun vrste Promet.
      */
@@ -77,6 +122,9 @@ data class IzdatRacun(
         )
     }
 }
+
+/** Po ovome se refundirana stavka vezuje za stavku originalnog računa. */
+private val Stavka.kljuc get() = Triple(name, unitPrice, labels)
 
 private val VRSTE_ZA_REFUNDACIJU = setOf(VrstaRacuna.PROMET, VrstaRacuna.OBUKA, VrstaRacuna.PREDRACUN)
 

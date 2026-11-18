@@ -70,10 +70,20 @@ data class FilterZurnala(
  * Refundacija koja je već izdata za račun [brojRacuna] (ne računa se kopija refundacije), ili `null`.
  * Služi da se isti račun ne refundira dvaput.
  */
-fun ElektronskiZurnal.refundacijaZa(brojRacuna: String): IzdatRacun? = svi().firstOrNull {
+fun ElektronskiZurnal.refundacijaZa(brojRacuna: String): IzdatRacun? = refundacijeZa(brojRacuna).firstOrNull()
+
+/** Sve refundacije (cele i delimične, bez kopija) izdate za račun [brojRacuna], od najstarije. */
+fun ElektronskiZurnal.refundacijeZa(brojRacuna: String): List<IzdatRacun> = svi().filter {
     it.zahtev.transactionType == TipTransakcije.REFUNDACIJA &&
         it.zahtev.invoiceType != VrstaRacuna.KOPIJA &&
         it.zahtev.referentDocumentNumber == brojRacuna
+}.reversed()
+
+/** Promet Prodaja koja je već izdata iz predračuna [brojPredracuna], ili `null` (predračun se naplaćuje jednom). */
+fun ElektronskiZurnal.prometIzPredracuna(brojPredracuna: String): IzdatRacun? = svi().firstOrNull {
+    it.zahtev.invoiceType == VrstaRacuna.PROMET &&
+        it.zahtev.transactionType == TipTransakcije.PRODAJA &&
+        it.zahtev.referentDocumentNumber == brojPredracuna
 }
 
 val IzdatRacun.datum: String? get() = racun.sdcDateTime?.take(10)?.takeIf { it.length == 10 }

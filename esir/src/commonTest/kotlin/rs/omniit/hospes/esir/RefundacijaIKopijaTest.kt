@@ -139,4 +139,63 @@ class RefundacijaIKopijaTest {
         assertEquals("X-Y-2", zurnal.refundacijaZa("X-Y-1")?.racun?.invoiceNumber, "kopije se ne računaju")
         assertNull(zurnal.refundacijaZa("X-Y-2"))
     }
+
+    private val tri = prodaja.copy(
+        items = listOf(
+            Stavka("Kafa /kom", Decimal4.parse("3"), Decimal4.parse("225"), Decimal4.parse("675"), listOf("A")),
+            Stavka("Sir /kg", Decimal4.parse("0.25"), Decimal4.parse("1199.99"), Decimal4.parse("300"), listOf("A")),
+            Stavka("Kafa /kom", Decimal4.parse("1"), Decimal4.parse("225"), Decimal4.parse("225"), listOf("A")),
+        ),
+        payment = listOf(Placanje(Decimal4.parse("700"), NacinPlacanja.GOTOVINA), Placanje(Decimal4.parse("500"), NacinPlacanja.PLATNA_KARTICA)),
+    )
+
+    private fun d(vararg v: String) = v.map(Decimal4::parse)
+
+    @Test
+    fun delimicnaRefundacija() {
+        val original = izdat(tri, "X-Y-1")
+        val r = original.zahtevZaDelimicnuRefundaciju("20:123456789", d("1", "0", "0"), NacinPlacanja.GOTOVINA)
+
+        assertEquals(listOf(Stavka("Kafa /kom", Decimal4.parse("1"), Decimal4.parse("225"), Decimal4.parse("225"), listOf("A"))), r.items)
+        assertEquals(listOf(Placanje(Decimal4.parse("225"), NacinPlacanja.GOTOVINA)), r.payment)
+        assertEquals(TipTransakcije.REFUNDACIJA, r.transactionType)
+        assertEquals("X-Y-1", r.referentDocumentNumber)
+        assertEquals(emptyList(), r.proveri())
+
+        val sir = original.zahtevZaDelimicnuRefundaciju("20:1", d("0", "0.1", "0"), NacinPlacanja.PLATNA_KARTICA)
+        assertEquals("120", sir.items.single().totalAmount.toString(), "0,1 kg × 1199,99 = 119,999 → 120,00")
+    }
+
+    @Test
+    fun neVracaSeViseNegoStoJeOstalo() {
+        val original = izdat(tri, "X-Y-1")
+        val prva = izdat(original.zahtevZaDelimicnuRefundaciju("20:1", d("2", "0", "1"), NacinPlacanja.GOTOVINA), "X-Y-2")
+        assertEquals(d("0", "0.25", "1"), original.preostaloZaRefundaciju(listOf(prva)), "3 vraćene kafe se troše redom: prva stavka (3), pa druga")
+
+        val greska = assertFailsWith<IllegalArgumentException> {
+            original.zahtevZaDelimicnuRefundaciju("20:1", d("2", "0", "0"), NacinPlacanja.GOTOVINA, original.preostaloZaRefundaciju(listOf(prva)))
+        }
+        assertEquals("„Kafa /kom“: može da se vrati najviše 0, a traži se 2", greska.message)
+        assertFailsWith<IllegalArgumentException> { original.zahtevZaDelimicnuRefundaciju("20:1", d("0", "0", "0"), NacinPlacanja.GOTOVINA) }
+        assertFailsWith<IllegalArgumentException> { original.zahtevZaDelimicnuRefundaciju("20:1", d("0.0005", "0", "0"), NacinPlacanja.GOTOVINA) }
+
+        val cela = izdat(original.zahtevZaRefundaciju("20:1"), "X-Y-3")
+        assertEquals(d("0", "0", "0"), original.preostaloZaRefundaciju(listOf(cela)))
+    }
+
+    @Test
+    fun zurnalRefundacijeIPredracun() {
+        val zurnal = ZurnalUMemoriji()
+        val original = izdat(tri, "X-Y-1").copy(racun = FiskalizovanRacun("X-Y-1", "2026-11-18T10:00:00+01:00"))
+        zurnal.sacuvaj(original)
+        zurnal.sacuvaj(izdat(original.zahtevZaDelimicnuRefundaciju("20:1", d("1", "0", "0"), NacinPlacanja.GOTOVINA), "X-Y-2"))
+        zurnal.sacuvaj(izdat(original.zahtevZaDelimicnuRefundaciju("20:1", d("1", "0", "0"), NacinPlacanja.GOTOVINA), "X-Y-3"))
+        assertEquals(2, zurnal.refundacijeZa("X-Y-1").size)
+
+        val predracun = izdat(prodaja.copy(invoiceType = VrstaRacuna.PREDRACUN), "X-Y-4")
+        zurnal.sacuvaj(predracun)
+        assertNull(zurnal.prometIzPredracuna("X-Y-4"))
+        zurnal.sacuvaj(izdat(predracun.zahtevZaPrometIzPredracuna(), "X-Y-5"))
+        assertEquals("X-Y-5", zurnal.prometIzPredracuna("X-Y-4")?.racun?.invoiceNumber)
+    }
 }

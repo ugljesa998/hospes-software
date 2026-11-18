@@ -37,7 +37,9 @@ import rs.omniit.hospes.esir.ZahtevZaRacun
 import rs.omniit.hospes.esir.noviRequestId
 import rs.omniit.hospes.esir.poSifriIliGtinu
 import rs.omniit.hospes.esir.redZaPotpisKupca
+import rs.omniit.hospes.esir.prometIzPredracuna
 import rs.omniit.hospes.esir.refundacijaZa
+import rs.omniit.hospes.esir.refundacijeZa
 import rs.omniit.hospes.esir.uvezi
 
 /** Poruka korisniku ispod obračuna. */
@@ -70,6 +72,10 @@ class EsirModel(private val okruzenje: Okruzenje, private val scope: CoroutineSc
     var vrstaRacuna by mutableStateOf(VrstaRacuna.OBUKA)
     var nacinPlacanja by mutableStateOf(NacinPlacanja.GOTOVINA)
     var primljeno by mutableStateOf("")
+
+    /** Kupac na računu (npr. „na firmu“: šifra 10 = PIB); prazan broj = račun bez kupca. */
+    var sifraKupca by mutableStateOf("10")
+    var brojKupca by mutableStateOf("")
 
     /** Papir u štampaču (podešavanje kase); račun se štampa jednom, odmah posle izdavanja. */
     var papir by mutableStateOf(SirinaPapira.MM80)
@@ -266,12 +272,20 @@ class EsirModel(private val okruzenje: Okruzenje, private val scope: CoroutineSc
             poruka = Poruka(e.message ?: "Neispravna naplata", greska = true)
             return
         }
+        val kupac = brojKupca.trim().takeIf { it.isNotEmpty() }?.let { "$sifraKupca:$it" }
+        kupac?.let { id ->
+            SifarnikKupca.proveriIdKupca(id)?.let {
+                poruka = Poruka(it, greska = true)
+                return
+            }
+        }
         val zahtev = ZahtevZaRacun(
             invoiceType = vrstaRacuna,
             transactionType = TipTransakcije.PRODAJA,
             payment = naplata.placanja,
             items = stavke.toList(),
             cashier = "Hospes test",
+            buyerId = kupac,
         )
         val dodatak = if (naplata.kusur > Decimal4.NULA) listOf("Повраћај:" + naplata.kusur.zaStampu().padStart(31)) else emptyList()
 
@@ -281,27 +295,66 @@ class EsirModel(private val okruzenje: Okruzenje, private val scope: CoroutineSc
             if (rezultat.izdat != null) {
                 stavke.clear()
                 primljeno = ""
+                brojKupca = ""
             }
         }
     }
 
-    /** Refundacija koja je već izdata za ovaj račun, ili `null` (isti račun se ne refundira dvaput). */
+    /** Refundacija koja je već izdata za ovaj račun, ili `null`. */
     fun refundacijaZa(izdat: IzdatRacun): IzdatRacun? = okruzenje.zurnal.refundacijaZa(izdat.racun.invoiceNumber)
 
+    /** Sve refundacije ovog računa (cele i delimične), od najstarije. */
+    fun refundacijeZa(izdat: IzdatRacun): List<IzdatRacun> = okruzenje.zurnal.refundacijeZa(izdat.racun.invoiceNumber)
+
+    /** Koliko je od svake stavke još ostalo za refundaciju (redom kao stavke računa). */
+    fun preostaloZaRefundaciju(izdat: IzdatRacun): List<Decimal4> = izdat.preostaloZaRefundaciju(refundacijeZa(izdat))
+
+    /** Unete količine (prazno = 0), ili `null` ako neka nije broj. */
+    fun kolicineIzTeksta(kolicine: List<String>): List<Decimal4>? = runCatching {
+        kolicine.map { q -> q.takeIf { it.isNotBlank() }?.let(::broj) ?: Decimal4.NULA }
+    }.getOrNull()
+
+    /** Iznos koji bi se vratio za unete količine, ili `null` ako unos nije ispravan. */
+    fun iznosRefundacije(izdat: IzdatRacun, kolicine: List<String>): Decimal4? = runCatching {
+        izdat.zahtev.items.zip(kolicine).fold(Decimal4.NULA) { zbir, (s, q) ->
+            zbir + (s.unitPrice * (q.takeIf { it.isNotBlank() }?.let(::broj) ?: Decimal4.NULA)).zaokruzi(2)
+        }
+    }.getOrNull()
+
     /**
-     * Refundacija celog računa (PURS uputstvo 9.6), uz ID kupca koji prima novac (šifra iz šifarnika 9.8 i broj).
-     * Posle refundacije **gotovine** odmah se izdaje i Kopija Refundacije sa redom za potpis kupca; ona ostaje u radnji.
+     * Refundacija računa (PURS uputstvo 9.6), uz ID kupca koji prima novac (šifra iz šifarnika 9.8 i broj).
+     *
+     * - Bez [kolicine], ili kada se prvi put vraća sve: refundacija celog računa, istim plaćanjima kao na računu.
+     * - Inače refundacija dela računa: [kolicine] po stavkama (prazno = 0), novac se vraća načinom [nacin].
+     *   Ne može se vratiti više nego što je ostalo posle ranijih refundacija.
+     *
+     * Posle refundacije **gotovine** (vrsta Promet) odmah se izdaje i Kopija Refundacije sa redom za potpis kupca.
      * Vraća grešku unosa (ništa nije poslato PFR-u) ili `null` ako je rad sa PFR-om započet.
      */
-    fun refundiraj(original: IzdatRacun, sifraKupca: String, brojKupca: String): String? {
+    fun refundiraj(
+        original: IzdatRacun,
+        sifraKupca: String,
+        brojKupca: String,
+        kolicine: List<String>? = null,
+        nacin: NacinPlacanja? = null,
+    ): String? {
         if (brojKupca.isBlank()) return "Unesi broj (${SifarnikKupca.idKupca[sifraKupca] ?: "dokument kupca"})"
         val id = "$sifraKupca:${brojKupca.trim()}"
         SifarnikKupca.proveriIdKupca(id)?.let { return it }
-        refundacijaZa(original)?.let {
-            return "Račun ${original.racun.invoiceNumber} je već refundiran računom ${it.racun.invoiceNumber}"
+        val ranije = refundacijeZa(original)
+        val preostalo = original.preostaloZaRefundaciju(ranije)
+        if (preostalo.all { it == Decimal4.NULA }) {
+            val brojevi = ranije.map { it.racun.invoiceNumber }
+            return "Račun ${original.racun.invoiceNumber} je već refundiran ${if (brojevi.size == 1) "računom" else "računima"} ${brojevi.joinToString()}"
         }
+        val opciono = original.zahtev.buyerCostCenterId.takeIf { id == original.zahtev.buyerId }
         val zahtev = try {
-            original.zahtevZaRefundaciju(id, original.zahtev.buyerCostCenterId.takeIf { id == original.zahtev.buyerId })
+            val trazeno = kolicine?.map { q -> q.takeIf { it.isNotBlank() }?.let(::broj) ?: Decimal4.NULA } ?: preostalo
+            if (ranije.isEmpty() && trazeno == original.zahtev.items.map { it.quantity }) {
+                original.zahtevZaRefundaciju(id, opciono)
+            } else {
+                original.zahtevZaDelimicnuRefundaciju(id, trazeno, nacin ?: original.zahtev.payment.first().paymentType, preostalo, opciono)
+            }
         } catch (e: IllegalArgumentException) {
             return e.message ?: "Račun nije moguće refundirati"
         }
@@ -333,6 +386,37 @@ class EsirModel(private val okruzenje: Okruzenje, private val scope: CoroutineSc
         }
         return null
     }
+
+    /** Promet Prodaja koja je već izdata iz ovog predračuna, ili `null`. */
+    fun prometIzPredracuna(predracun: IzdatRacun): IzdatRacun? = okruzenje.zurnal.prometIzPredracuna(predracun.racun.invoiceNumber)
+
+    /**
+     * Naplata po predračunu: Promet Prodaja sa istim stavkama i kupcem, uz poziv na predračun (ESIR upitnik deo 10, P13).
+     * [primljeno] je koliko je kupac dao u gotovini (za kusur). Predračun se naplaćuje samo jednom.
+     * Vraća grešku (ništa nije poslato PFR-u) ili `null` ako je rad sa PFR-om započet.
+     */
+    fun naplatiPredracun(predracun: IzdatRacun, nacin: NacinPlacanja, primljeno: String = ""): String? {
+        prometIzPredracuna(predracun)?.let {
+            return "Predračun ${predracun.racun.invoiceNumber} je već naplaćen računom ${it.racun.invoiceNumber}"
+        }
+        val zaNaplatu = Obracun.ukupno(predracun.zahtev.items)
+        val (zahtev, naplata) = try {
+            val dato = primljeno.takeIf { it.isNotBlank() && nacin == NacinPlacanja.GOTOVINA }?.let(::broj)
+            val naplata = Obracun.naplata(zaNaplatu, listOf(nacin to null), dato)
+            predracun.zahtevZaPrometIzPredracuna(naplata.placanja) to naplata
+        } catch (e: IllegalArgumentException) {
+            return e.message ?: "Predračun nije moguće naplatiti"
+        }
+        val dodatak = if (naplata.kusur > Decimal4.NULA) listOf("Повраћај:" + naplata.kusur.zaStampu().padStart(31)) else emptyList()
+        posao { veza -> poruka = izdajZahtev(veza, zahtev, dodatak).poruka }
+        return null
+    }
+
+    /** Kusur pri naplati predračuna gotovinom, ili `null`. */
+    fun kusurZaPredracun(predracun: IzdatRacun, primljeno: String): Decimal4? = runCatching {
+        val dato = primljeno.takeIf { it.isNotBlank() }?.let(::broj) ?: return null
+        Obracun.naplata(Obracun.ukupno(predracun.zahtev.items), listOf(NacinPlacanja.GOTOVINA to null), dato).kusur
+    }.getOrNull()
 
     /**
      * Kopija računa vrste Promet (prodaje ili refundacije); kod gotovinske refundacije sa redom za potpis kupca (9.6).

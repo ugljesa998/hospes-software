@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -44,6 +45,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -63,11 +65,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import rs.omniit.hospes.esir.Artikal
+import rs.omniit.hospes.esir.Decimal4
 import rs.omniit.hospes.esir.Esir
 import rs.omniit.hospes.esir.IzdatRacun
 import rs.omniit.hospes.esir.NacinPlacanja
 import rs.omniit.hospes.esir.SifarnikKupca
 import rs.omniit.hospes.esir.SirinaPapira
+import rs.omniit.hospes.esir.TipTransakcije
 import rs.omniit.hospes.esir.VrstaPfra
 import rs.omniit.hospes.esir.VrstaRacuna
 import rs.omniit.hospes.esir.naziv
@@ -190,7 +194,7 @@ private fun RacunKartica(m: EsirModel) {
 
             Text("Plaćanje", fontWeight = FontWeight.SemiBold)
             Izbor(
-                listOf(NacinPlacanja.GOTOVINA, NacinPlacanja.PLATNA_KARTICA, NacinPlacanja.PRENOS_NA_RACUN, NacinPlacanja.INSTANT_PLACANJE),
+                NACINI_PLACANJA,
                 m.nacinPlacanja,
                 { it.naziv },
             ) { m.nacinPlacanja = it }
@@ -200,6 +204,8 @@ private fun RacunKartica(m: EsirModel) {
                     m.kusur?.let { Text("Kusur: ${it.zaStampu()} RSD", style = MaterialTheme.typography.titleMedium) }
                 }
             }
+
+            KupacNaRacunu(m)
 
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Štampač (virtuelni), papir:", fontSize = 13.sp)
@@ -377,29 +383,84 @@ private fun Papir(p: PrikazRacuna) {
     }
 }
 
+private val NACINI_PLACANJA = listOf(
+    NacinPlacanja.GOTOVINA,
+    NacinPlacanja.PLATNA_KARTICA,
+    NacinPlacanja.PRENOS_NA_RACUN,
+    NacinPlacanja.INSTANT_PLACANJE,
+)
+
+/** Količina za prikaz i unos: decimalni zarez, bez nepotrebnih nula (npr. „0,25“). */
+private fun Decimal4.uTekst(): String = toString().replace('.', ',')
+
+/** Kupac: šifra iz šifarnika 9.8 (PURS uputstvo) i broj dokumenta. */
+@Composable
+private fun UnosKupca(sifra: String, broj: String, oznakaBroja: String, naSifru: (String) -> Unit, naBroj: (String) -> Unit) {
+    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
+        Izbor(SifarnikKupca.idKupca.keys.toList(), sifra, { it }, kompaktno = true, naIzbor = naSifru)
+    }
+    Text("$sifra: ${SifarnikKupca.idKupca[sifra].orEmpty()}", color = Color.DarkGray, fontSize = 12.sp)
+    OutlinedTextField(broj, naBroj, label = { Text(oznakaBroja) }, singleLine = true, modifier = Modifier.fillMaxWidth())
+}
+
+/** Kupac na računu koji se izdaje („na firmu“: PIB); bez broja račun nema kupca. */
+@Composable
+private fun KupacNaRacunu(m: EsirModel) {
+    var otvoren by remember { mutableStateOf(false) }
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        TextButton(onClick = { otvoren = !otvoren }) { Text(if (otvoren) "Kupac ▲" else "Kupac (na firmu, PIB…) ▼") }
+        if (m.brojKupca.isNotBlank()) {
+            Text("${m.sifraKupca}:${m.brojKupca.trim()}", fontWeight = FontWeight.Medium)
+            TextButton(onClick = { m.brojKupca = "" }) { Text("Bez kupca") }
+        }
+    }
+    if (otvoren) {
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            UnosKupca(m.sifraKupca, m.brojKupca, "Broj (npr. PIB firme)", { m.sifraKupca = it }, { m.brojKupca = it })
+        }
+    }
+}
+
+private enum class PanelRacuna { REFUNDACIJA, NAPLATA }
+
 /**
- * Radnje nad prikazanim računom: refundacija (prodaja vrste Promet, Obuka, Predračun) i kopija (vrsta Promet).
- * Kopija se potvrđuje drugim klikom, jer se izdaje preko PFR-a i ostaje u žurnalu.
+ * Radnje nad prikazanim računom:
+ * - Naplati: predračun → Promet Prodaja (jednom);
+ * - Refundacija: cela ili deo računa, dok ima šta da se vrati (prodaja vrste Promet, Obuka, Predračun);
+ * - Kopija: račun vrste Promet; potvrđuje se drugim klikom, jer se izdaje preko PFR-a.
  */
 @Composable
 private fun RadnjeRacuna(m: EsirModel, izdat: IzdatRacun) {
     val broj = izdat.racun.invoiceNumber
-    var refundacija by remember(broj) { mutableStateOf(false) }
+    var panel by remember(broj) { mutableStateOf<PanelRacuna?>(null) }
     var potvrdaKopije by remember(broj) { mutableStateOf(false) }
     var greska by remember(broj) { mutableStateOf<String?>(null) }
-    val refundiran = remember(broj, m.zurnal) { m.refundacijaZa(izdat) }
+    val refundacije = remember(broj, m.zurnal) { if (izdat.mozeRefundacija) m.refundacijeZa(izdat) else emptyList() }
+    val preostalo = remember(broj, m.zurnal) { if (izdat.mozeRefundacija) m.preostaloZaRefundaciju(izdat) else emptyList() }
+    val imaZaRefundaciju = preostalo.any { it > Decimal4.NULA }
+    val predracun = izdat.zahtev.invoiceType == VrstaRacuna.PREDRACUN && izdat.zahtev.transactionType == TipTransakcije.PRODAJA
+    val naplacen = remember(broj, m.zurnal) { if (predracun) m.prometIzPredracuna(izdat) else null }
     val mozeSlati = !m.radi && m.status != null
-    if (!izdat.mozeRefundacija && !izdat.mozeKopija) return
+    if (!izdat.mozeRefundacija && !izdat.mozeKopija && !predracun) return
+
+    fun prebaci(p: PanelRacuna) {
+        panel = if (panel == p) null else p
+        potvrdaKopije = false
+        greska = null
+    }
 
     Spacer(Modifier.height(6.dp))
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-        if (izdat.mozeRefundacija) {
-            if (refundiran != null) {
-                Text("Refundiran računom ${refundiran.racun.invoiceNumber}", color = Color.Gray, fontSize = 13.sp)
+        if (predracun) {
+            if (naplacen != null) {
+                Text("Naplaćen računom ${naplacen.racun.invoiceNumber}", color = Color.Gray, fontSize = 13.sp)
             } else {
-                OutlinedButton(onClick = { refundacija = !refundacija; potvrdaKopije = false; greska = null }, enabled = mozeSlati) {
-                    Text("Refundacija")
-                }
+                Button(onClick = { prebaci(PanelRacuna.NAPLATA) }, enabled = mozeSlati) { Text("Naplati") }
+            }
+        }
+        if (imaZaRefundaciju) {
+            OutlinedButton(onClick = { prebaci(PanelRacuna.REFUNDACIJA) }, enabled = mozeSlati) {
+                Text(if (refundacije.isEmpty()) "Refundacija" else "Refundacija ostatka")
             }
         }
         if (izdat.mozeKopija) {
@@ -408,43 +469,93 @@ private fun RadnjeRacuna(m: EsirModel, izdat: IzdatRacun) {
                 Button(onClick = { greska = m.izdajKopiju(izdat); potvrdaKopije = false }, enabled = mozeSlati) { Text("Da, izdaj kopiju") }
                 TextButton(onClick = { potvrdaKopije = false }) { Text("Ne") }
             } else {
-                OutlinedButton(onClick = { potvrdaKopije = true; refundacija = false; greska = null }, enabled = mozeSlati) { Text("Kopija") }
+                OutlinedButton(onClick = { potvrdaKopije = true; panel = null; greska = null }, enabled = mozeSlati) { Text("Kopija") }
             }
         }
     }
-    if (m.status == null) Text("Za refundaciju i kopiju PFR mora biti dostupan (Osveži).", color = Color.Gray, fontSize = 12.sp)
-    if (refundacija && refundiran == null) {
-        Spacer(Modifier.height(6.dp))
-        PanelRefundacije(m, izdat) { refundacija = false }
+    if (refundacije.isNotEmpty()) {
+        Text(
+            (if (imaZaRefundaciju) "Delimično refundiran: " else "Refundiran: ") + refundacije.joinToString { it.racun.invoiceNumber },
+            color = Color.Gray,
+            fontSize = 13.sp,
+        )
+    }
+    if (m.status == null) Text("Za izdavanje PFR mora biti dostupan (Osveži).", color = Color.Gray, fontSize = 12.sp)
+    when (panel) {
+        PanelRacuna.REFUNDACIJA -> if (imaZaRefundaciju) {
+            Spacer(Modifier.height(6.dp))
+            PanelRefundacije(m, izdat, preostalo, prva = refundacije.isEmpty()) { panel = null }
+        }
+        PanelRacuna.NAPLATA -> if (naplacen == null) {
+            Spacer(Modifier.height(6.dp))
+            PanelNaplate(m, izdat) { panel = null }
+        }
+        null -> {}
     }
     greska?.let { Text(it, color = CRVENA, fontSize = 13.sp) }
 }
 
-/** Refundacija celog računa: šta se vraća, ID kupca koji prima novac (obavezno, PURS 9.6) i potvrda. */
+/**
+ * Refundacija: stavke i količine koje se vraćaju (unapred: sve što je ostalo), način povraćaja novca
+ * i ID kupca koji prima novac (obavezno, PURS 9.6).
+ */
 @Composable
-private fun PanelRefundacije(m: EsirModel, izdat: IzdatRacun, zatvori: () -> Unit) {
+private fun PanelRefundacije(m: EsirModel, izdat: IzdatRacun, preostalo: List<Decimal4>, prva: Boolean, zatvori: () -> Unit) {
     val ranije = izdat.zahtev.buyerId?.split(":", limit = 2)?.takeIf { it.size == 2 && it[0] in SifarnikKupca.idKupca }
     var sifra by remember { mutableStateOf(ranije?.get(0) ?: "20") }
     var broj by remember { mutableStateOf(ranije?.get(1) ?: "") }
     var greska by remember { mutableStateOf<String?>(null) }
-    // Kopija za potpis kupca: samo kod refundacije računa vrste Promet plaćenog gotovinom (9.6).
-    val kopijaZaPotpis = izdat.mozeKopija && izdat.zahtev.payment.any { it.paymentType == NacinPlacanja.GOTOVINA }
+    val kolicine = remember { mutableStateListOf(*preostalo.map { it.uTekst() }.toTypedArray()) }
+    val naciniRacuna = izdat.zahtev.payment.map { it.paymentType }.distinct()
+    var nacin by remember { mutableStateOf(naciniRacuna.first()) }
+
+    val trazeno = m.kolicineIzTeksta(kolicine)
+    val cela = prva && trazeno == izdat.zahtev.items.map { it.quantity }
+    val iznos = m.iznosRefundacije(izdat, kolicine)
+    // Kopija za potpis kupca: refundacija računa vrste Promet kada se vraća gotovina (9.6).
+    val gotovina = if (cela) izdat.zahtev.payment.any { it.paymentType == NacinPlacanja.GOTOVINA } else nacin == NacinPlacanja.GOTOVINA
+    val kopijaZaPotpis = izdat.mozeKopija && gotovina
 
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text("Refundacija celog računa ${izdat.racun.invoiceNumber}", fontWeight = FontWeight.SemiBold)
-            Text(
-                "Vraća se ${izdat.ukupno.zaStampu()} RSD (" +
-                    izdat.zahtev.payment.joinToString { "${it.paymentType.naziv} ${it.amount.zaStampu()}" } +
-                    "), stavki: ${izdat.zahtev.items.size}",
-                fontSize = 13.sp,
-            )
-            Text("Kupac koji prima novac (obavezno):", fontSize = 13.sp)
-            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
-                Izbor(SifarnikKupca.idKupca.keys.toList(), sifra, { it }, kompaktno = true) { sifra = it; greska = null }
+            Text("Refundacija računa ${izdat.racun.invoiceNumber}", fontWeight = FontWeight.SemiBold)
+            Column(Modifier.heightIn(max = 260.dp).verticalScroll(rememberScrollState())) {
+                izdat.zahtev.items.forEachIndexed { i, s ->
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 2.dp)) {
+                        Column(Modifier.weight(1f)) {
+                            Text(s.name, maxLines = 1)
+                            Text(
+                                "${s.unitPrice.zaStampu()} · prodato ${s.quantity.uTekst()}, može da se vrati ${preostalo[i].uTekst()}",
+                                color = Color.Gray,
+                                fontSize = 12.sp,
+                            )
+                        }
+                        OutlinedTextField(
+                            kolicine[i],
+                            { kolicine[i] = it; greska = null },
+                            singleLine = true,
+                            enabled = preostalo[i] > Decimal4.NULA,
+                            modifier = Modifier.width(96.dp),
+                        )
+                    }
+                }
             }
-            Text("$sifra: ${SifarnikKupca.idKupca[sifra].orEmpty()}", color = Color.DarkGray, fontSize = 12.sp)
-            OutlinedTextField(broj, { broj = it; greska = null }, label = { Text("Broj") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = { preostalo.forEachIndexed { i, q -> kolicine[i] = q.uTekst() } }) { Text("Sve") }
+                TextButton(onClick = { kolicine.indices.forEach { kolicine[it] = "0" } }) { Text("Ništa") }
+                Spacer(Modifier.weight(1f))
+                Text(iznos?.let { "Vraća se ${it.zaStampu()} RSD" } ?: "Neispravna količina", fontWeight = FontWeight.SemiBold)
+            }
+            if (cela) {
+                Text("Novac se vraća kao na računu: " + izdat.zahtev.payment.joinToString { "${it.paymentType.naziv} ${it.amount.zaStampu()}" }, fontSize = 13.sp)
+            } else {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Novac se vraća:", fontSize = 13.sp)
+                    Izbor(naciniRacuna, nacin, { it.naziv }, kompaktno = true) { nacin = it }
+                }
+            }
+            Text("Kupac koji prima novac (obavezno):", fontSize = 13.sp)
+            UnosKupca(sifra, broj, "Broj", { sifra = it; greska = null }, { broj = it; greska = null })
             if (kopijaZaPotpis) {
                 Text(
                     "Gotovina: odmah posle refundacije izdaje se i Kopija sa redom za potpis kupca. Kupac je potpisuje i ona ostaje u radnji.",
@@ -457,12 +568,53 @@ private fun PanelRefundacije(m: EsirModel, izdat: IzdatRacun, zatvori: () -> Uni
                 Spacer(Modifier.weight(1f))
                 Button(
                     onClick = {
-                        greska = m.refundiraj(izdat, sifra, broj)
+                        greska = m.refundiraj(izdat, sifra, broj, kolicine.toList(), if (cela) null else nacin)
                         if (greska == null) zatvori()
                     },
                     enabled = !m.radi && m.status != null,
                     colors = ButtonDefaults.buttonColors(containerColor = CRVENA),
                 ) { Text("Izdaj refundaciju") }
+            }
+            greska?.let { Text(it, color = CRVENA, fontSize = 13.sp) }
+        }
+    }
+}
+
+/** Naplata po predračunu: način plaćanja i kusur; izdaje se Promet Prodaja uz poziv na predračun. */
+@Composable
+private fun PanelNaplate(m: EsirModel, predracun: IzdatRacun, zatvori: () -> Unit) {
+    var nacin by remember { mutableStateOf(NacinPlacanja.GOTOVINA) }
+    var primljeno by remember { mutableStateOf("") }
+    var greska by remember { mutableStateOf<String?>(null) }
+
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("Naplata po predračunu ${predracun.racun.invoiceNumber}", fontWeight = FontWeight.SemiBold)
+            Text(
+                "Za naplatu ${predracun.ukupno.zaStampu()} RSD, stavki: ${predracun.zahtev.items.size}" +
+                    (predracun.zahtev.buyerId?.let { ", kupac $it" } ?: ""),
+                fontSize = 13.sp,
+            )
+            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
+                Izbor(NACINI_PLACANJA, nacin, { it.naziv }, kompaktno = true) { nacin = it; greska = null }
+            }
+            if (nacin == NacinPlacanja.GOTOVINA) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    OutlinedTextField(primljeno, { primljeno = it; greska = null }, label = { Text("Kupac dao") }, singleLine = true, modifier = Modifier.width(160.dp))
+                    m.kusurZaPredracun(predracun, primljeno)?.let { Text("Kusur: ${it.zaStampu()} RSD", fontWeight = FontWeight.SemiBold) }
+                }
+            }
+            Text("Izdaje se Promet Prodaja sa istim stavkama, uz poziv na predračun.", color = Color.DarkGray, fontSize = 12.sp)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = zatvori) { Text("Odustani") }
+                Spacer(Modifier.weight(1f))
+                Button(
+                    onClick = {
+                        greska = m.naplatiPredracun(predracun, nacin, primljeno)
+                        if (greska == null) zatvori()
+                    },
+                    enabled = !m.radi && m.status != null,
+                ) { Text("Izdaj Promet Prodaju") }
             }
             greska?.let { Text(it, color = CRVENA, fontSize = 13.sp) }
         }

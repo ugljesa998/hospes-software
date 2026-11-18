@@ -79,8 +79,13 @@ class EsirModelTest {
                     when {
                         z.url.encodedPath.endsWith("/attention") -> respond("", HttpStatusCode.OK)
                         z.url.encodedPath.endsWith("/status") -> respond(status, HttpStatusCode.OK, json)
-                        z.url.encodedPath.endsWith("/invoices") ->
-                            respond(izdat.replace("TEST1234-TEST1234-1", "TEST1234-TEST1234-${++brojRacuna}"), HttpStatusCode.OK, json)
+                        z.url.encodedPath.endsWith("/invoices") -> {
+                            // Kao pravi PFR: novi broj računa i ukupni brojač (po njemu se žurnal ređa kada je vreme isto).
+                            val n = ++brojRacuna
+                            val odgovor = izdat.replace("TEST1234-TEST1234-1", "TEST1234-TEST1234-$n")
+                                .replace("\"totalAmount\"", "\"totalCounter\":$n,\"totalAmount\"")
+                            respond(odgovor, HttpStatusCode.OK, json)
+                        }
                         else -> respond("", HttpStatusCode.NotFound)
                     }
                 },
@@ -288,5 +293,86 @@ class EsirModelTest {
         assertEquals("Sale", kopija.tekst("transactionType"))
         assertEquals(promet.racun.invoiceNumber, kopija.tekst("referentDocumentNumber"))
         assertTrue(m.poruka!!.tekst.contains("(Kopija Prodaja) je izdat"), m.poruka!!.tekst)
+    }
+
+    @Test
+    fun kupacNaRacunu() = runTest {
+        val m = EsirModel(okruzenje, this)
+        m.osvezi()
+        m.poslednjiPosao!!.join()
+        assertNull(m.dodajStavku("Kafa", "1", "300", "A", ""))
+        m.sifraKupca = "99"
+        m.brojKupca = "123"
+        m.izdaj()
+        assertTrue(m.poruka!!.tekst.contains("nepoznata šifra 99"), m.poruka!!.tekst)
+        assertEquals(0, poslatiRacuni().size)
+
+        m.sifraKupca = "10"
+        m.brojKupca = " 115423827 "
+        m.izdaj()
+        m.poslednjiPosao!!.join()
+        assertEquals("10:115423827", poslatiRacuni().single().tekst("buyerId"))
+        assertEquals("", m.brojKupca, "sledeći račun je opet bez kupca")
+
+        assertNull(m.dodajStavku("Kafa", "1", "300", "A", ""))
+        m.izdaj()
+        m.poslednjiPosao!!.join()
+        assertNull(poslatiRacuni().last()["buyerId"]?.takeUnless { it is kotlinx.serialization.json.JsonNull })
+    }
+
+    @Test
+    fun naplataPoPredracunu() = runTest {
+        val m = EsirModel(okruzenje, this)
+        val predracun = m.izdajProbni(VrstaRacuna.PREDRACUN)
+        assertEquals("75", m.kusurZaPredracun(predracun, "750").toString(), "675 za naplatu, kupac dao 750")
+        assertNull(m.prometIzPredracuna(predracun))
+
+        assertNull(m.naplatiPredracun(predracun, NacinPlacanja.PLATNA_KARTICA))
+        m.poslednjiPosao!!.join()
+        val promet = poslatiRacuni().last()
+        assertEquals("Normal", promet.tekst("invoiceType"))
+        assertEquals("Sale", promet.tekst("transactionType"))
+        assertEquals(predracun.racun.invoiceNumber, promet.tekst("referentDocumentNumber"))
+        val placanje = promet["payment"]!!.jsonArray.single().jsonObject
+        assertEquals("Card", placanje["paymentType"]!!.jsonPrimitive.content)
+        assertEquals("675", placanje["amount"].toString())
+        assertTrue(m.poruka!!.tekst.contains("(Promet Prodaja) je izdat"), m.poruka!!.tekst)
+
+        assertEquals("TEST1234-TEST1234-2", m.prometIzPredracuna(predracun)?.racun?.invoiceNumber)
+        assertEquals(
+            "Predračun TEST1234-TEST1234-1 je već naplaćen računom TEST1234-TEST1234-2",
+            m.naplatiPredracun(predracun, NacinPlacanja.GOTOVINA),
+        )
+        assertEquals(2, poslatiRacuni().size)
+    }
+
+    @Test
+    fun delimicnaRefundacijaUDvaDela() = runTest {
+        val m = EsirModel(okruzenje, this)
+        val original = m.izdajProbni(VrstaRacuna.PROMET) // Kafa 3 × 225 (posle 10% popusta), gotovina
+        assertEquals(listOf("3"), m.preostaloZaRefundaciju(original).map { it.toString() })
+        assertEquals("225", m.iznosRefundacije(original, listOf("1")).toString())
+
+        assertNull(m.refundiraj(original, "20", "123456789", listOf("1"), NacinPlacanja.GOTOVINA))
+        m.poslednjiPosao!!.join()
+        val prva = poslatiRacuni()[1]
+        val stavka = prva["items"]!!.jsonArray.single().jsonObject
+        assertEquals("1", stavka["quantity"].toString())
+        assertEquals("225", stavka["totalAmount"].toString())
+        assertEquals("225", prva["payment"]!!.jsonArray.single().jsonObject["amount"].toString())
+        assertEquals("Copy", poslatiRacuni()[2].tekst("invoiceType"), "gotovina: kopija za potpis")
+
+        assertEquals(listOf("2"), m.preostaloZaRefundaciju(original).map { it.toString() })
+        assertEquals("„Kafa“: može da se vrati najviše 2, a traži se 3", m.refundiraj(original, "20", "123456789", listOf("3")))
+
+        assertNull(m.refundiraj(original, "20", "123456789"), "bez količina: vraća se sve što je ostalo")
+        m.poslednjiPosao!!.join()
+        assertEquals("2", poslatiRacuni()[3]["items"]!!.jsonArray.single().jsonObject["quantity"].toString())
+        assertEquals(listOf("0"), m.preostaloZaRefundaciju(original).map { it.toString() })
+        assertEquals(
+            "Račun TEST1234-TEST1234-1 je već refundiran računima TEST1234-TEST1234-2, TEST1234-TEST1234-4",
+            m.refundiraj(original, "20", "123456789"),
+        )
+        assertEquals(5, poslatiRacuni().size)
     }
 }
