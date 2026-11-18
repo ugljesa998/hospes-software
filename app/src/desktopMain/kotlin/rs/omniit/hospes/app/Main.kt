@@ -25,7 +25,9 @@ import java.time.LocalDate
 import kotlin.system.exitProcess
 
 fun main() {
-    val okruzenje = DesktopOkruzenje(korenPodataka())
+    val koren = korenPodataka()
+    beleziGreske(koren)
+    val okruzenje = DesktopOkruzenje(koren)
 
     application {
         Window(
@@ -38,6 +40,18 @@ fun main() {
     }
     // HTTP biblioteka drži svoje niti još ~60 s; posle zatvaranja prozora program se odmah završava.
     exitProcess(0)
+}
+
+/**
+ * Instalirana aplikacija nema konzolu: neočekivane greške se upisuju u `greske.log` u folderu podataka,
+ * da bi se kod klijenta moglo videti šta se desilo.
+ */
+private fun beleziGreske(koren: File) {
+    val log = File(koren, "greske.log")
+    Thread.setDefaultUncaughtExceptionHandler { nit, e ->
+        runCatching { log.appendText("${java.time.LocalDateTime.now()} [${nit.name}] ${e.stackTraceToString()}\n") }
+        System.err.println(e.stackTraceToString())
+    }
 }
 
 /**

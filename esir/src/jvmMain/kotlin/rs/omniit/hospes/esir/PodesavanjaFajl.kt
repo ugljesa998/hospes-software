@@ -11,13 +11,7 @@ class PodesavanjaFajl(val fajl: File) {
     fun ucitaj(): Podesavanja = if (fajl.exists()) Podesavanja.izJsona(fajl.readText()) else Podesavanja()
 
     fun sacuvaj(podesavanja: Podesavanja) {
-        fajl.absoluteFile.parentFile?.mkdirs()
-        val privremeni = File(fajl.absoluteFile.parentFile, fajl.name + ".tmp")
-        privremeni.writeText(podesavanja.uJson())
-        if (!privremeni.renameTo(fajl)) {
-            fajl.delete()
-            check(privremeni.renameTo(fajl)) { "Podešavanja nije moguće sačuvati u ${fajl.path}" }
-        }
+        fajl.upisiBezbedno(podesavanja.uJson())
     }
 }
 

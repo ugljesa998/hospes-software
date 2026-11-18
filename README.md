@@ -84,6 +84,19 @@ Pri prvom pokretanju bez podešavanja aplikacija otvara „Podešavanja“.
 
 Ako je aplikacija upaljena, zatvori je pre `./gradlew build`, pa je posle ponovo pokreni.
 
+## Windows instalacija
+
+Na svaki push na `main` GitHub Actions (`.github/workflows/windows.yml`) na Windows računaru pokrene sve testove i
+napravi `Hospes POS-0.0.1.msi` sa ugrađenom Javom. Paket se preuzima na GitHub-u: Actions → „Windows instalacija“ →
+poslednje pokretanje → Artifacts → `hospes-pos-windows`. Ručno pokretanje: „Run workflow“.
+Uputstvo za instalaciju: [docs/uputstvo-instalacija.md](docs/uputstvo-instalacija.md).
+
+Lokalna provera paketa na Mac-u (Java iz Homebrew-a; pravi paket se pravi na GitHub-u):
+
+```bash
+./gradlew :app:createDistributable -Pcompose.desktop.packaging.checkJdkVendor=false
+```
+
 ## Komande
 
 ```bash

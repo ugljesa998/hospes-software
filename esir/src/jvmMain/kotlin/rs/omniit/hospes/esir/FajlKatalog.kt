@@ -14,12 +14,6 @@ class FajlKatalog(val fajl: File) : KatalogUMemoriji() {
     }
 
     override fun posleIzmene() {
-        fajl.parentFile?.mkdirs()
-        val privremeni = File(fajl.path + ".tmp")
-        privremeni.writeText(EsirHttp.json.encodeToString(ListSerializer(Artikal.serializer()), svi()))
-        if (!privremeni.renameTo(fajl)) {
-            fajl.delete()
-            privremeni.renameTo(fajl)
-        }
+        fajl.upisiBezbedno(EsirHttp.json.encodeToString(ListSerializer(Artikal.serializer()), svi()))
     }
 }
