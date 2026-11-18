@@ -20,6 +20,8 @@ import kotlin.system.exitProcess
 private val putanjaPodesavanja: String = System.getenv("HOSPES_CONFIG") ?: "config/local.json"
 
 fun main(args: Array<String>) {
+    // Crtanje računa za štampu (AWT) bez prozora; na Mac-u bez ikonice u Dock-u.
+    System.setProperty("java.awt.headless", "true")
     println("Hospes ESIR ${Esir.VERSION} (TaxCore ${Esir.PROTOCOL})")
 
     when (val komanda = args.firstOrNull()) {
@@ -39,6 +41,7 @@ fun main(args: Array<String>) {
         "korporativna-refundacija" -> runBlocking { komandaKorporativnaRefundacija(args.toList()) }
         "bez-naknade" -> runBlocking { komandaBezNaknade(args.toList()) }
         "katalog" -> komandaKatalog(args.toList())
+        "stampa" -> komandaStampa(args.toList())
         "zurnal" -> komandaZurnal(args.toList())
         "lista" -> komandaZurnal(listOf("zurnal", "--sve"))
         "provera" -> runBlocking { komandaProvera(args.toList()) }
@@ -60,6 +63,7 @@ private fun ispisiPomoc() {
         Komande:
           status                              stanje PFR-a: dostupnost, PIN, šifre stanja, poreske stope
           pin                                 PIN iz config/local.json (jednom, bez ponavljanja)
+          stampa <broj> [--papir 58|80]       račun iz žurnala na virtuelnom štampaču (stampa/: PNG i ESC/POS)
           katalog [--trazi tekst]             katalog artikala (podaci/katalog.json)
           katalog dodaj --sifra 101 --naziv 'Espresso' --cena 180 --oznaka A [--jm kom] [--gtin …] [--kategorija …]
           katalog cena <šifra> <cena> | katalog ukloni <šifra> | katalog uvoz <fajl.csv> | katalog izvoz <fajl.csv>

@@ -4,6 +4,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.graphics.ImageBitmap
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -24,6 +25,7 @@ import rs.omniit.hospes.esir.PfrVeza
 import rs.omniit.hospes.esir.PoreskaStopa
 import rs.omniit.hospes.esir.RezultatPina
 import rs.omniit.hospes.esir.RezultatRacuna
+import rs.omniit.hospes.esir.SirinaPapira
 import rs.omniit.hospes.esir.SifreStanja
 import rs.omniit.hospes.esir.StatusOdgovor
 import rs.omniit.hospes.esir.Stavka
@@ -38,8 +40,8 @@ import rs.omniit.hospes.esir.uvezi
 /** Poruka korisniku ispod obračuna. */
 data class Poruka(val tekst: String, val greska: Boolean)
 
-/** Račun prikazan desno: tekst (PFR + ESIR dodatak) i QR kod. */
-data class PrikazRacuna(val naslov: String, val tekst: String, val qr: ByteArray?)
+/** Račun prikazan desno: broj, tekst (PFR + ESIR dodatak) i QR kod. */
+data class PrikazRacuna(val broj: String, val naslov: String, val tekst: String, val qr: ByteArray?)
 
 /**
  * Stanje i radnje ESIR test ekrana. Sva fiskalna pravila su u ESIR modulu; ovde je samo povezivanje sa ekranom.
@@ -63,6 +65,9 @@ class EsirModel(private val okruzenje: Okruzenje, private val scope: CoroutineSc
     var vrstaRacuna by mutableStateOf(VrstaRacuna.OBUKA)
     var nacinPlacanja by mutableStateOf(NacinPlacanja.GOTOVINA)
     var primljeno by mutableStateOf("")
+
+    /** Papir u štampaču (podešavanje kase); račun se štampa jednom, odmah posle izdavanja. */
+    var papir by mutableStateOf(SirinaPapira.MM80)
 
     var prikazan by mutableStateOf<PrikazRacuna?>(null)
         private set
@@ -278,7 +283,13 @@ class EsirModel(private val okruzenje: Okruzenje, private val scope: CoroutineSc
                     primljeno = ""
                     ucitajZurnal()
                     val naknadno = if (r.pronadjenNaknadno) " (pronađen po RequestId posle prekida veze)" else ""
-                    Poruka("Račun ${r.racun.invoiceNumber} je izdat$naknadno", greska = false)
+                    val broj = r.racun.invoiceNumber
+                    try {
+                        val stampa = withContext(Dispatchers.IO) { okruzenje.stampaj(broj, papir) }
+                        Poruka("Račun $broj je izdat$naknadno. $stampa", greska = false)
+                    } catch (e: Exception) {
+                        Poruka("Račun $broj JE izdat$naknadno (ne izdaji ga ponovo), ali štampa nije uspela: ${e.message ?: e}", greska = true)
+                    }
                 }
                 is RezultatRacuna.Odbijen -> {
                     val sifre = r.greska?.modelState.orEmpty().flatMap { p -> p.errors.map { "${p.property}: $it ${SifreStanja.za(it).opis}" } }
@@ -300,11 +311,16 @@ class EsirModel(private val okruzenje: Okruzenje, private val scope: CoroutineSc
     fun prikazi(izdat: IzdatRacun) {
         val broj = izdat.racun.invoiceNumber
         prikazan = PrikazRacuna(
+            broj = broj,
             naslov = "$broj · ${izdat.oznaka}",
             tekst = okruzenje.tekstRacuna(broj) ?: izdat.racun.journal ?: "(nema teksta računa)",
             qr = izdat.racun.verificationQRCode?.let(::dekodirajBase64),
         )
     }
+
+    /** Kako račun izgleda na papiru (samo prikaz; ne štampa). */
+    fun pregledOtiska(broj: String, papir: SirinaPapira): Result<ImageBitmap?> =
+        runCatching { okruzenje.pregledOtiska(broj, papir)?.uSliku() }
 
     fun zatvori() {
         otvoren?.close()

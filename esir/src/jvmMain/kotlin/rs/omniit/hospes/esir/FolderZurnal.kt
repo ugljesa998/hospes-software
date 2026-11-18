@@ -32,6 +32,11 @@ class FolderZurnal(val folder: File) : ElektronskiZurnal {
     /** Tekst računa onako kako je sačuvan (PFR + ESIR dodatak), ili `null`. */
     fun tekstRacuna(brojRacuna: String): String? = fajl(brojRacuna, "txt").takeIf { it.exists() }?.readText()
 
+    /** Redovi koje je ESIR dodao na odštampan račun (kusur, potpis kupca…), bez razvojnog naslova. */
+    fun dodatak(brojRacuna: String): List<String> =
+        tekstRacuna(brojRacuna)?.substringAfter(NASLOV_DODATKA, "")?.lines().orEmpty()
+            .dropWhile { it.isBlank() }.dropLastWhile { it.isBlank() }
+
     fun fajl(brojRacuna: String, nastavak: String): File = File(folder, "${imeFajla(brojRacuna)}.$nastavak")
 
     private fun procitaj(fajl: File): IzdatRacun? =

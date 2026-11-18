@@ -51,6 +51,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -64,6 +65,7 @@ import androidx.compose.ui.unit.sp
 import rs.omniit.hospes.esir.Artikal
 import rs.omniit.hospes.esir.Esir
 import rs.omniit.hospes.esir.NacinPlacanja
+import rs.omniit.hospes.esir.SirinaPapira
 import rs.omniit.hospes.esir.VrstaPfra
 import rs.omniit.hospes.esir.VrstaRacuna
 import rs.omniit.hospes.esir.naziv
@@ -197,6 +199,11 @@ private fun RacunKartica(m: EsirModel) {
                 }
             }
 
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Štampač (virtuelni), papir:", fontSize = 13.sp)
+                Izbor(SirinaPapira.entries, m.papir, { it.naziv }, kompaktno = true) { m.papir = it }
+            }
+
             Button(
                 onClick = m::izdaj,
                 enabled = !m.radi && m.stavke.isNotEmpty() && m.status != null,
@@ -315,6 +322,7 @@ private enum class Desno(val naslov: String) { RACUN("Prikaz računa"), ZURNAL("
 @Composable
 private fun ColumnScope.DesnaStrana(m: EsirModel) {
     var desno by remember { mutableStateOf(Desno.RACUN) }
+    var izgled by remember { mutableStateOf<SirinaPapira?>(m.papir) }
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Izbor(Desno.entries, desno, { it.naslov }) {
             desno = it
@@ -332,10 +340,16 @@ private fun ColumnScope.DesnaStrana(m: EsirModel) {
         if (p == null) {
             Text("Izdaj račun ili ga izaberi u žurnalu.", color = Color.Gray)
         } else {
-            Text(p.naslov, fontWeight = FontWeight.SemiBold)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(p.naslov, Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
+                Izbor(listOf(null, SirinaPapira.MM58, SirinaPapira.MM80), izgled, { it?.let { "Papir ${it.naziv}" } ?: "Tekst" }, kompaktno = true) {
+                    izgled = it
+                }
+            }
             Spacer(Modifier.height(6.dp))
             Box(Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState())) {
-                Papir(p)
+                val papir = izgled
+                if (papir == null) Papir(p) else OtisakNaPapiru(m, p, papir)
             }
         }
     }
@@ -357,6 +371,23 @@ private fun Papir(p: PrikazRacuna) {
                 RedRacuna(red)
             }
         }
+    }
+}
+
+/** Račun tačno onako kako ga štampač odštampa (svaka tačka štampača), u umanjenoj veličini; samo prikaz. */
+@Composable
+private fun OtisakNaPapiru(m: EsirModel, p: PrikazRacuna, papir: SirinaPapira) {
+    val rezultat = remember(p.broj, papir) { m.pregledOtiska(p.broj, papir) }
+    val slika = rezultat.getOrNull()
+    when {
+        rezultat.isFailure -> Text("Otisak nije moguće nacrtati: ${rezultat.exceptionOrNull()?.message}", color = CRVENA)
+        slika == null -> Text("Za ovaj račun nema teksta od PFR-a", color = Color.Gray)
+        else -> Image(
+            slika,
+            contentDescription = "Račun na papiru ${papir.naziv}",
+            modifier = Modifier.size((slika.width * 0.75f).dp, (slika.height * 0.75f).dp),
+            filterQuality = FilterQuality.Medium,
+        )
     }
 }
 

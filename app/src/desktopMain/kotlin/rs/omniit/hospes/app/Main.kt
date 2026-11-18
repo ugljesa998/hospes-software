@@ -12,6 +12,9 @@ import rs.omniit.hospes.esir.KatalogCsvFajl
 import rs.omniit.hospes.esir.FolderZurnal
 import rs.omniit.hospes.esir.OtvorenPfr
 import rs.omniit.hospes.esir.Podesavanja
+import rs.omniit.hospes.esir.SirinaPapira
+import rs.omniit.hospes.esir.VirtuelniStampac
+import rs.omniit.hospes.esir.otisak
 import rs.omniit.hospes.esir.VrstaPfra
 import rs.omniit.hospes.esir.otvoriPfr
 import java.awt.FileDialog
@@ -76,6 +79,16 @@ private class DesktopOkruzenje(private val koren: File, private val podesavanja:
     override fun otvoriPfr(vrsta: VrstaPfra): OtvorenPfr = otvoriPfr(podesavanja, vrsta, koren)
 
     override fun tekstRacuna(brojRacuna: String): String? = folderZurnal.tekstRacuna(brojRacuna)
+
+    /** Dok nema pravog štampača: slike i ESC/POS bajtovi u `stampa/` (nije u Git-u). */
+    private val stampac = VirtuelniStampac(File(koren, "stampa"))
+
+    override fun pregledOtiska(brojRacuna: String, papir: SirinaPapira): ByteArray? = folderZurnal.otisak(brojRacuna, papir)?.png()
+
+    override fun stampaj(brojRacuna: String, papir: SirinaPapira): String {
+        val otisak = folderZurnal.otisak(brojRacuna, papir) ?: throw IllegalStateException("Račun $brojRacuna nema tekst u žurnalu")
+        return stampac.stampaj(brojRacuna, otisak)
+    }
 
     override fun pre30Dana(): String = LocalDate.now().minusDays(30).toString()
 }

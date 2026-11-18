@@ -29,6 +29,7 @@ Gradle ne treba instalirati: `./gradlew` sam preuzima odgovarajuću verziju.
 Ekran: izbor L-PFR/V-PFR, stanje i PIN, stavke iz kataloga (klik, pretraga, bar-kod čitač + Enter) ili ručni unos
 (količina, cena, popust, poreska oznaka iz PFR-a), plaćanje i kusur, izdavanje računa, prikaz računa sa QR kodom,
 elektronski žurnal za 30 dana i katalog artikala (novi artikal, izmena i cena, pretraga, uvoz i izvoz CSV).
+Posle izdavanja račun se štampa jednom, na izabranom papiru (58 ili 80 mm); desno se vidi „Tekst“ ili tačan izgled na papiru.
 Koristi isti `config/local.json`, isti žurnal (`racuni/`) i isti katalog (`podaci/katalog.json`) kao komandna linija.
 
 Ako je aplikacija upaljena, zatvori je pre `./gradlew build`, pa je posle ponovo pokreni.
@@ -79,6 +80,19 @@ Katalog artikala (ESIR upitnik, deo 11) se čuva u `podaci/katalog.json` (nije u
 CSV: kolone `sifra;naziv;jedinica_mere;cena;oznaka;gtin;kategorija`, decimalni zarez (`1199,99`).
 Obavezne su `sifra`, `naziv`, `cena` i `oznaka`. Excel fajl sačuvan kao „CSV UTF-8“ ili običan „CSV“ (Windows-1250) se čita ispravno.
 Poreska oznaka mora postojati u stanju PFR-a; u sandbox-u su oznake izmišljene (A = 10%), u produkciji npr. Ђ = 20%.
+
+Štampa računa (dok nema pravog štampača, virtuelni štampač u folderu `stampa/`, nije u Git-u):
+
+```bash
+./gradlew -q :esir-cli:run --args="stampa <PFR broj>"              # PNG (izgled na papiru) i .escpos (bajtovi za štampač), 58 i 80 mm
+./gradlew -q :esir-cli:run --args="stampa <PFR broj> --papir 58"
+```
+
+- Račun ide štampaču **kao slika** (ESC/POS `GS v 0`): ćirilica radi na svakom štampaču, otisak = pregled.
+- Termalni štampač: 8 tačaka po mm; 58 mm papir → 384 tačke (48 mm), 80 mm → 576 tačaka (72 mm), 40 znakova u redu.
+- „ОВО НИЈЕ ФИСКАЛНИ РАЧУН“ duplo većim slovima; QR kod 40–50 mm, pre završne linije
+  (na 80 mm 48,5 mm sa jednakim modulima od 4 tačke; na 58 mm oko 43 mm). Testovi proveravaju da se QR čita.
+- `stampa` je alat za razvoj: drugi primerak fiskalnog računa se ne štampa ponovo, već se izdaje Kopija (`kopija <broj>`).
 
 Izdati računi se čuvaju u folderu `racuni/` (tekst računa, QR kod kao GIF, ceo odgovor PFR-a). Folder nije u Git-u.
 

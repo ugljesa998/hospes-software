@@ -4,6 +4,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import rs.omniit.hospes.esir.ElektronskiZurnal
 import rs.omniit.hospes.esir.Katalog
 import rs.omniit.hospes.esir.OtvorenPfr
+import rs.omniit.hospes.esir.SirinaPapira
 import rs.omniit.hospes.esir.VrstaPfra
 
 /**
@@ -30,6 +31,15 @@ interface Okruzenje {
 
     /** Sačuvan tekst računa (PFR + ESIR dodatak), ako postoji. */
     fun tekstRacuna(brojRacuna: String): String?
+
+    /** Račun iz žurnala nacrtan za [papir], kao PNG slika (pregled na ekranu), ili `null` ako ga nema. */
+    fun pregledOtiska(brojRacuna: String, papir: SirinaPapira): ByteArray?
+
+    /**
+     * Štampa račun iz žurnala; vraća kratak opis gde je odštampan. Baca izuzetak ako štampa nije uspela.
+     * Poziva se jednom, posle izdavanja: drugi primerak se izdaje preko PFR-a kao Kopija.
+     */
+    fun stampaj(brojRacuna: String, papir: SirinaPapira): String
 
     /** Datum pre 30 dana, `gggg-mm-dd`, za podrazumevani prikaz žurnala. */
     fun pre30Dana(): String

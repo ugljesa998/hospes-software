@@ -19,6 +19,7 @@ import rs.omniit.hospes.esir.KatalogUMemoriji
 import rs.omniit.hospes.esir.LpfrVeza
 import rs.omniit.hospes.esir.NacinPlacanja
 import rs.omniit.hospes.esir.OtvorenPfr
+import rs.omniit.hospes.esir.SirinaPapira
 import rs.omniit.hospes.esir.VrstaPfra
 import rs.omniit.hospes.esir.VrstaRacuna
 import rs.omniit.hospes.esir.ZurnalUMemoriji
@@ -42,6 +43,8 @@ class EsirModelTest {
     """
 
     private val zahtevi = mutableListOf<HttpRequestData>()
+    private val odstampano = mutableListOf<Pair<String, SirinaPapira>>()
+    private var stampacRadi = true
 
     private val okruzenje = object : Okruzenje {
         override val pin = "1234"
@@ -53,6 +56,12 @@ class EsirModelTest {
                 Artikal("900", "Uvozni artikal", Decimal4.parse("100"), "Ђ"),
             ),
         )
+        override fun pregledOtiska(brojRacuna: String, papir: SirinaPapira): ByteArray? = null
+        override fun stampaj(brojRacuna: String, papir: SirinaPapira): String {
+            check(stampacRadi) { "nema papira" }
+            odstampano += brojRacuna to papir
+            return "Odštampan na test štampaču."
+        }
         override fun procitajCsv(): String? = null
         override fun sacuvajCsv(predlogImena: String, tekst: String): String? = null
         override fun otvoriPfr(vrsta: VrstaPfra): OtvorenPfr {
@@ -91,8 +100,9 @@ class EsirModelTest {
         m.izdaj()
         m.poslednjiPosao!!.join()
 
-        assertEquals("Račun TEST1234-TEST1234-1 je izdat", m.poruka?.tekst)
+        assertEquals("Račun TEST1234-TEST1234-1 je izdat. Odštampan na test štampaču.", m.poruka?.tekst)
         assertFalse(m.poruka!!.greska)
+        assertEquals(listOf("TEST1234-TEST1234-1" to SirinaPapira.MM80), odstampano, "štampa se jednom, odmah posle izdavanja")
         assertTrue(m.stavke.isEmpty(), "posle izdavanja obračun je prazan")
         assertEquals("", m.primljeno)
         assertEquals(1, okruzenje.zurnal.svi().size)
@@ -167,5 +177,23 @@ class EsirModelTest {
 
         m.ukloniArtikal("104")
         assertNull(m.artikli.singleOrNull { it.sifra == "104" })
+    }
+
+    @Test
+    fun stampaNijeUspelaAliJeRacunIzdat() = runTest {
+        val m = EsirModel(okruzenje, this)
+        m.osvezi()
+        m.poslednjiPosao!!.join()
+        assertNull(m.dodajStavku("Kafa", "1", "300", "A", ""))
+        m.papir = SirinaPapira.MM58
+        stampacRadi = false
+        m.izdaj()
+        m.poslednjiPosao!!.join()
+
+        val poruka = assertNotNull(m.poruka)
+        assertTrue(poruka.greska)
+        assertEquals("Račun TEST1234-TEST1234-1 JE izdat (ne izdaji ga ponovo), ali štampa nije uspela: nema papira", poruka.tekst)
+        assertEquals(1, okruzenje.zurnal.svi().size, "račun je u žurnalu")
+        assertTrue(m.stavke.isEmpty())
     }
 }

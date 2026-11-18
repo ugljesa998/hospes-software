@@ -26,5 +26,14 @@ kotlin {
             implementation(libs.ktor.client.mock)
             implementation(libs.kotlinx.coroutines.test)
         }
+        jvmTest.dependencies {
+            // Samo u testovima: čita odštampan QR kod, da proverimo da je posle smanjivanja i dalje ispravan.
+            implementation(libs.zxing.core)
+        }
     }
+}
+
+// Crtanje otiska (AWT) u testovima, bez prozora i bez ikonice u Dock-u.
+tasks.withType<Test>().configureEach {
+    systemProperty("java.awt.headless", "true")
 }
