@@ -20,6 +20,12 @@ data class Podesavanja(
     val kasiri: List<String> = emptyList(),
     /** Papir u štampaču. */
     val papir: SirinaPapira? = null,
+    /** Član 6, stav 2 Pravilnika: kartica, ček i instant plaćanje se ne nude (unose se kao gotovina). */
+    val ogranicenjePlacanja: OgranicenjePlacanja? = null,
+    /** Tekst koji se štampa ispod „КРАЈ ФИСКАЛНОГ РАЧУНА“ (polje za reklamu; obavezno za Napredni ESIR). */
+    val tekstIspodRacuna: String? = null,
+    /** Serijski broj ove instalacije (dodeljuje se pri prvom pokretanju). */
+    val serijskiBroj: String? = null,
 ) {
     /** PFR koji se koristi kada nije izričito izabran. */
     val izabraniPfr: VrstaPfra
@@ -37,6 +43,13 @@ data class Podesavanja(
 
         fun izJsona(tekst: String): Podesavanja = json.decodeFromString(serializer(), tekst)
     }
+}
+
+/** Serijski broj instalacije, npr. `HP-7KQ2-M9XD` (bez slova i cifara koje se lako pobrkaju: 0/O, 1/I). */
+fun noviSerijskiBroj(slucajno: kotlin.random.Random = kotlin.random.Random.Default): String {
+    val znaci = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
+    fun deo() = (1..4).map { znaci[slucajno.nextInt(znaci.length)] }.joinToString("")
+    return "HP-${deo()}-${deo()}"
 }
 
 /** Pravila za ime kasira. */

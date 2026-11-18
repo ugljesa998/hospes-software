@@ -95,6 +95,7 @@ data class Naplata(val placanja: List<Placanje>, val kusur: Decimal4)
  * ESIR podešavanje iz upitnika (deo 10, P7): po Pravilniku (član 6, stav 2) ESIR mora da ima funkciju koja
  * onemogućava unos platne kartice, čeka i instant plaćanja; kasir ih tada unosi kao gotovinu.
  */
+@kotlinx.serialization.Serializable
 enum class OgranicenjePlacanja(val opis: String, val dozvoljeni: Set<NacinPlacanja>) {
     NEMA("bez ograničenja", NacinPlacanja.entries.toSet()),
     BEZ_KARTICE_CEKA_I_INSTANTA(

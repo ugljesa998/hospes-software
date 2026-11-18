@@ -20,6 +20,7 @@ import rs.omniit.hospes.esir.LpfrPodesavanja
 import rs.omniit.hospes.esir.LpfrVeza
 import rs.omniit.hospes.esir.Podesavanja
 import rs.omniit.hospes.esir.NacinPlacanja
+import rs.omniit.hospes.esir.OgranicenjePlacanja
 import rs.omniit.hospes.esir.OtvorenPfr
 import rs.omniit.hospes.esir.SirinaPapira
 import rs.omniit.hospes.esir.VrstaPfra
@@ -62,6 +63,10 @@ class EsirModelTest {
     private val odstampano = mutableListOf<Pair<String, SirinaPapira>>()
     private var stampacRadi = true
 
+    /** Žurnal u memoriji; pamti i redove koje ESIR dodaje ispod računa. */
+    private val zurnalUMemoriji = ZurnalUMemoriji()
+    private val dodaci = mutableMapOf<String, List<String>>()
+
     /** Sačuvana podešavanja (umesto fajla); jedan kasir, pa je izabran odmah. */
     private var sacuvano = Podesavanja(lpfr = LpfrPodesavanja("http://lpfr.test/api"), kasiri = listOf("Test kasir"))
 
@@ -76,7 +81,12 @@ class EsirModelTest {
             require(lozinka == "dobra") { "Sertifikat ne može da se otvori: lozinka nije dobra ili fajl nije .p12/.pfx" }
             return "UID TEST1234 · PIB 115423827"
         }
-        override val zurnal = ZurnalUMemoriji()
+        override val zurnal = object : rs.omniit.hospes.esir.ElektronskiZurnal by zurnalUMemoriji {
+            override fun sacuvaj(izdat: rs.omniit.hospes.esir.IzdatRacun, dodatak: List<String>) {
+                dodaci[izdat.racun.invoiceNumber] = dodatak
+                zurnalUMemoriji.sacuvaj(izdat, dodatak)
+            }
+        }
         override val katalog = KatalogUMemoriji(
             listOf(
                 Artikal("101", "Espresso", Decimal4.parse("180"), "A", kategorija = "Kafa"),
@@ -758,5 +768,88 @@ class EsirModelTest {
         assertNull(m.konacniPosao, "posle izdavanja se vraća običan račun")
         assertTrue(m.stavke.isEmpty())
         assertEquals("", m.brojKupca)
+    }
+
+    @Test
+    fun podeljenoPlacanjeSaKusurom() = runTest {
+        val m = EsirModel(okruzenje, this)
+        m.spremi("Kafa", "675")
+        m.vrstaRacuna = VrstaRacuna.PROMET
+        m.dodajDeoPlacanja()
+        assertEquals(NacinPlacanja.PLATNA_KARTICA, m.dodatnaPlacanja.single().nacin)
+        m.izdaj()
+        assertEquals("Upiši iznos za „Platna kartica“", m.poruka?.tekst)
+
+        m.promeniDeoPlacanja(0, DeoPlacanja(NacinPlacanja.PLATNA_KARTICA, "500"))
+        m.nacinPlacanja = NacinPlacanja.GOTOVINA
+        assertEquals("175", m.ostatakNaplate(m.ukupno).toString())
+        m.primljeno = "200"
+        assertEquals("25", m.kusur.toString())
+        m.izdaj()
+        m.poslednjiPosao!!.join()
+        val r = poslatiRacuni().single()
+        assertEquals(listOf("Card" to "500", "Cash" to "175"), (0..1).map { r.nacin(it) to r.iznos(it) })
+        assertEquals(listOf("Повраћај:                          25,00"), dodaci["TEST1234-TEST1234-1"])
+        assertTrue(m.dodatnaPlacanja.isEmpty(), "posle izdavanja: jedno plaćanje")
+    }
+
+    @Test
+    fun sviNaciniPlacanjaIOgranicenje() = runTest {
+        val m = EsirModel(okruzenje, this)
+        assertEquals(7, m.dozvoljeniNacini.size)
+        m.spremi()
+        m.vrstaRacuna = VrstaRacuna.PROMET
+        m.nacinPlacanja = NacinPlacanja.CEK
+        m.izdaj()
+        m.poslednjiPosao!!.join()
+        assertEquals("Check", poslatiRacuni().last().nacin())
+
+        m.nacinPlacanja = NacinPlacanja.PLATNA_KARTICA
+        m.postaviOgranicenje(true)
+        assertEquals(OgranicenjePlacanja.BEZ_KARTICE_CEKA_I_INSTANTA, sacuvano.ogranicenjePlacanja)
+        assertEquals(
+            listOf(NacinPlacanja.GOTOVINA, NacinPlacanja.PRENOS_NA_RACUN, NacinPlacanja.VAUCER, NacinPlacanja.DRUGO_BEZGOTOVINSKO),
+            m.dozvoljeniNacini,
+        )
+        assertEquals(NacinPlacanja.GOTOVINA, m.nacinPlacanja, "kartica nije dozvoljena: gotovina")
+        m.postaviOgranicenje(false)
+        assertNull(sacuvano.ogranicenjePlacanja)
+    }
+
+    @Test
+    fun opcionoPoljeKupca() = runTest {
+        val m = EsirModel(okruzenje, this)
+        m.spremi()
+        m.sifraOpcionog = "20"
+        m.brojOpcionog = "12345"
+        m.izdaj()
+        assertEquals("Opciono polje kupca traži i ID kupca", m.poruka?.tekst)
+        m.sifraKupca = "10"
+        m.brojKupca = "123456789"
+        m.izdaj()
+        m.poslednjiPosao!!.join()
+        assertEquals("20:12345", poslatiRacuni().single().tekst("buyerCostCenterId"))
+        assertEquals("", m.brojOpcionog)
+    }
+
+    @Test
+    fun tekstIspodRacunaISerijskiBroj() = runTest {
+        val m = EsirModel(okruzenje, this)
+        val serijski = assertNotNull(sacuvano.serijskiBroj, "dodeljen pri prvom pokretanju")
+        assertEquals(serijski, m.serijskiBroj)
+        assertEquals(serijski, EsirModel(okruzenje, this).serijskiBroj, "ne menja se")
+
+        assertEquals("Red može da ima najviše 40 znakova (koliko staje na papir)", m.sacuvajTekstIspodRacuna("X".repeat(41)))
+        assertNull(m.sacuvajTekstIspodRacuna("Hvala na poseti!\nwww.hospes.rs\n"))
+        assertEquals("Hvala na poseti!\nwww.hospes.rs", sacuvano.tekstIspodRacuna)
+
+        m.spremi()
+        m.primljeno = "500"
+        m.izdaj()
+        m.poslednjiPosao!!.join()
+        assertEquals(
+            listOf("Повраћај:                         200,00", "", "Hvala na poseti!", "www.hospes.rs"),
+            dodaci["TEST1234-TEST1234-1"],
+        )
     }
 }

@@ -30,7 +30,15 @@ Ekran: izbor L-PFR/V-PFR, stanje i PIN, stavke iz kataloga (klik, pretraga, bar-
 (količina, cena, popust, poreska oznaka iz PFR-a), plaćanje i kusur, izdavanje računa, prikaz računa sa QR kodom,
 elektronski žurnal za 30 dana i katalog artikala (novi artikal, izmena i cena, pretraga, uvoz i izvoz CSV).
 Posle izdavanja račun se štampa jednom, na izabranom papiru (58 ili 80 mm); desno se vidi „Tekst“ ili tačan izgled na papiru.
-Kupac na računu („na firmu“): ispod plaćanja „Kupac“, šifra po šifarniku 9.8 (10 = PIB) i broj; važi za jedan račun.
+Plaćanje: svih 7 načina (gotovina, platna kartica, prenos na račun, instant, ček, vaučer, drugo bezgotovinsko) i
+podeljeno plaćanje („+ Podeli plaćanje“: delovi sa iznosom, glavni način dobija ostatak; kusur od gotovine).
+U Podešavanjima „Načini plaćanja“: kasa bez kartice, čeka i instanta (Pravilnik, član 6, stav 2; unose se kao gotovina).
+
+Kupac na računu („na firmu“): ispod plaćanja „Kupac“, šifra po šifarniku 9.8 (10 = PIB, 9 cifara) i broj, uz opciono
+polje kupca (šifre 20–33); važi za jedan račun.
+
+Podešavanja, „O programu“: proizvođač, proizvod (Hospes POS), verzija, serijski broj instalacije (dodeljuje se pri prvom
+pokretanju). „Tekst ispod računa“: štampa se ispod „КРАЈ ФИСКАЛНОГ РАЧУНА“ na svakom računu (polje za reklamu).
 
 Radnje nad računom iz žurnala (izaberi račun, dugmad ispod naslova):
 - „Naplati“ (predračun): Promet Prodaja sa istim stavkama, uz poziv na predračun; predračun se naplaćuje jednom.

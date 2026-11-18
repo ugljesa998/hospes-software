@@ -75,6 +75,7 @@ import rs.omniit.hospes.esir.Decimal4
 import rs.omniit.hospes.esir.Esir
 import rs.omniit.hospes.esir.IzdatRacun
 import rs.omniit.hospes.esir.NacinPlacanja
+import rs.omniit.hospes.esir.OgranicenjePlacanja
 import rs.omniit.hospes.esir.SifarnikKupca
 import rs.omniit.hospes.esir.SirinaPapira
 import rs.omniit.hospes.esir.TipTransakcije
@@ -110,7 +111,7 @@ fun App(okruzenje: Okruzenje) {
         Surface(Modifier.fillMaxSize(), color = Color(0xFFF4F4F2)) {
             Column(Modifier.fillMaxSize().padding(16.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Hospes ESIR ${Esir.VERSION}", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
+                    Text("${Esir.PROIZVOD} ${Esir.VERSION}", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
                     Spacer(Modifier.width(16.dp))
                     if (model.radi) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
                     Spacer(Modifier.weight(1f))
@@ -251,20 +252,7 @@ private fun RacunKartica(m: EsirModel) {
 
             if (!avans && konacni == null) PosebanSlucajRacuna(m)
 
-            if (m.posebanSlucaj == PosebanSlucaj.NE) {
-                Text("Plaćanje", fontWeight = FontWeight.SemiBold)
-                Izbor(
-                    NACINI_PLACANJA,
-                    m.nacinPlacanja,
-                    { it.naziv },
-                ) { m.nacinPlacanja = it }
-                if (m.nacinPlacanja == NacinPlacanja.GOTOVINA) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        OutlinedTextField(m.primljeno, { m.primljeno = it }, label = { Text("Kupac dao") }, singleLine = true, modifier = Modifier.width(160.dp))
-                        m.kusurZa(ostatak ?: zaNaplatu, m.primljeno)?.let { Text("Kusur: ${it.zaStampu()} RSD", style = MaterialTheme.typography.titleMedium) }
-                    }
-                }
-            }
+            if (m.posebanSlucaj == PosebanSlucaj.NE) NaplataRacuna(m, ostatak ?: zaNaplatu)
 
             val kupacSaAvansa = m.kupacSaAvansa
             when {
@@ -579,9 +567,12 @@ private fun TajnoPolje(vrednost: String, naziv: String, promena: (String) -> Uni
 private fun ColumnScope.PodesavanjaKase(m: EsirModel) {
     Column(Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         m.porukaPodesavanja?.let { Text(it.tekst, color = if (it.greska) CRVENA else ZELENA, fontSize = 13.sp) }
+        KarticaOProgramu(m)
         KarticaKasira(m)
         KarticaLpfr(m)
         KarticaVpfr(m)
+        KarticaPlacanja(m)
+        KarticaTekstaIspodRacuna(m)
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text("Štampač", fontWeight = FontWeight.SemiBold)
@@ -593,6 +584,76 @@ private fun ColumnScope.PodesavanjaKase(m: EsirModel) {
             }
         }
         Text("Podaci kase: ${m.folderPodataka}", color = Color.Gray, fontSize = 12.sp)
+    }
+}
+
+/** Proizvođač, proizvod, verzija i serijski broj (upitnik: operativne funkcije, pitanje 6). */
+@Composable
+private fun KarticaOProgramu(m: EsirModel) {
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text("O programu", fontWeight = FontWeight.SemiBold)
+            listOf(
+                "Proizvođač" to Esir.PROIZVODJAC,
+                "Proizvod" to Esir.PROIZVOD,
+                "Verzija softvera" to Esir.VERSION,
+                "Serijski broj" to m.serijskiBroj,
+                "Protokol sa PFR-om" to "TaxCore ${Esir.PROTOCOL}",
+                "ESIR broj" to "dodeljuje Poreska uprava odobrenjem",
+            ).forEach { (naziv, vrednost) ->
+                Row {
+                    Text(naziv, Modifier.width(170.dp), color = Color.DarkGray, fontSize = 13.sp)
+                    Text(vrednost, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                }
+            }
+        }
+    }
+}
+
+/** Član 6, stav 2 Pravilnika: kasa bez kartice, čeka i instant plaćanja (kasir ih unosi kao gotovinu). */
+@Composable
+private fun KarticaPlacanja(m: EsirModel) {
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("Načini plaćanja", fontWeight = FontWeight.SemiBold)
+            Izbor(
+                listOf(false, true),
+                m.ogranicenje != OgranicenjePlacanja.NEMA,
+                { if (it) "Bez kartice, čeka i instanta" else "Svih 7 načina" },
+                kompaktno = true,
+                naIzbor = m::postaviOgranicenje,
+            )
+            Text(
+                "Po Pravilniku (član 6, stav 2) neki obveznici ne evidentiraju platnu karticu, ček i instant plaćanje; " +
+                    "kasir ih tada unosi kao gotovinu. Kasa radi na jedan od ova dva načina.",
+                color = Color.Gray,
+                fontSize = 12.sp,
+            )
+        }
+    }
+}
+
+/** Tekst ispod „КРАЈ ФИСКАЛНОГ РАЧУНА“ (polje za reklamu; obavezno za Napredni ESIR). */
+@Composable
+private fun KarticaTekstaIspodRacuna(m: EsirModel) {
+    var tekst by remember(m.podesavanja.tekstIspodRacuna) { mutableStateOf(m.podesavanja.tekstIspodRacuna.orEmpty()) }
+    var greska by remember { mutableStateOf<String?>(null) }
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("Tekst ispod računa", fontWeight = FontWeight.SemiBold)
+            Text(
+                "Štampa se ispod „КРАЈ ФИСКАЛНОГ РАЧУНА“ na svakom računu (polje za reklamu), npr. „Hvala na poseti!“. " +
+                    "Najviše 10 redova po 40 znakova.",
+                color = Color.Gray,
+                fontSize = 12.sp,
+            )
+            OutlinedTextField(tekst, { tekst = it; greska = null }, minLines = 3, modifier = Modifier.fillMaxWidth())
+            Row {
+                Spacer(Modifier.weight(1f))
+                Button(onClick = { greska = m.sacuvajTekstIspodRacuna(tekst) }) { Text("Sačuvaj tekst") }
+            }
+            greska?.let { Text(it, color = CRVENA, fontSize = 13.sp) }
+        }
     }
 }
 
@@ -826,12 +887,6 @@ private fun MesecnaRefundacijaKartica(m: EsirModel) {
     Spacer(Modifier.height(6.dp))
 }
 
-private val NACINI_PLACANJA = listOf(
-    NacinPlacanja.GOTOVINA,
-    NacinPlacanja.PLATNA_KARTICA,
-    NacinPlacanja.PRENOS_NA_RACUN,
-    NacinPlacanja.INSTANT_PLACANJE,
-)
 
 /** Količina za prikaz i unos: decimalni zarez, bez nepotrebnih nula (npr. „0,25“). */
 private fun Decimal4.uTekst(): String = toString().replace('.', ',')
@@ -860,6 +915,59 @@ private fun KupacNaRacunu(m: EsirModel, otvoriOdmah: Boolean = false) {
     if (otvoren) {
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             UnosKupca(m.sifraKupca, m.brojKupca, "Broj (npr. PIB firme)", { m.sifraKupca = it }, { m.brojKupca = it })
+            Text("Opciono polje kupca (nije obavezno):", fontSize = 13.sp)
+            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
+                Izbor(SIFRE_OPCIONOG_POLJA, m.sifraOpcionog, { it }, kompaktno = true) { m.sifraOpcionog = it }
+            }
+            Text("${m.sifraOpcionog}: ${SifarnikKupca.opcionoPoljeKupca[m.sifraOpcionog].orEmpty()}", color = Color.DarkGray, fontSize = 12.sp)
+            OutlinedTextField(m.brojOpcionog, { m.brojOpcionog = it }, label = { Text("Broj (opciono polje kupca)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        }
+    } else if (m.brojOpcionog.isNotBlank()) {
+        Text("Opciono polje kupca: ${m.sifraOpcionog}:${m.brojOpcionog.trim()}", fontSize = 13.sp)
+    }
+}
+
+/**
+ * Plaćanje: svih 7 načina iz „Tehničkog vodiča“ (ili bez kartice, čeka i instanta, po podešavanju) i podeljeno
+ * plaćanje: delovi sa iznosom, a glavni način dobija ostatak. Kod gotovine: koliko je kupac dao i kusur.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun NaplataRacuna(m: EsirModel, zaNaplatu: Decimal4) {
+    Text("Plaćanje", fontWeight = FontWeight.SemiBold)
+    m.dodatnaPlacanja.forEachIndexed { i, deo ->
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(Modifier.weight(1f).horizontalScroll(rememberScrollState())) {
+                Izbor(m.dozvoljeniNacini, deo.nacin, { it.naziv }, kompaktno = true) { m.promeniDeoPlacanja(i, deo.copy(nacin = it)) }
+            }
+            OutlinedTextField(deo.iznos, { m.promeniDeoPlacanja(i, deo.copy(iznos = it)) }, label = { Text("Iznos") }, singleLine = true, modifier = Modifier.width(120.dp))
+            TextButton(onClick = { m.ukloniDeoPlacanja(i) }) { Text("Ukloni") }
+        }
+    }
+    if (m.dodatnaPlacanja.isNotEmpty()) {
+        Text("Ostatak ${m.ostatakNaplate(zaNaplatu)?.zaStampu() ?: "?"} RSD plaća se:", fontSize = 13.sp)
+    }
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        m.dozvoljeniNacini.forEach { n ->
+            val razmak = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+            if (n == m.nacinPlacanja) {
+                Button(onClick = { m.nacinPlacanja = n }, contentPadding = razmak, modifier = Modifier.height(34.dp)) { Text(n.naziv) }
+            } else {
+                OutlinedButton(onClick = { m.nacinPlacanja = n }, contentPadding = razmak, modifier = Modifier.height(34.dp)) { Text(n.naziv) }
+            }
+        }
+    }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        TextButton(onClick = m::dodajDeoPlacanja) { Text("+ Podeli plaćanje (više načina)") }
+        if (m.ogranicenje != OgranicenjePlacanja.NEMA) {
+            Text("Kartica, ček i instant su isključeni (Podešavanja).", color = Color.Gray, fontSize = 12.sp)
+        }
+    }
+    val gotovina = m.nacinPlacanja == NacinPlacanja.GOTOVINA || m.dodatnaPlacanja.any { it.nacin == NacinPlacanja.GOTOVINA }
+    if (gotovina) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            OutlinedTextField(m.primljeno, { m.primljeno = it }, label = { Text("Kupac dao") }, singleLine = true, modifier = Modifier.width(160.dp))
+            m.kusurNaplate(zaNaplatu)?.let { Text("Kusur: ${it.zaStampu()} RSD", style = MaterialTheme.typography.titleMedium) }
         }
     }
 }
@@ -1076,7 +1184,7 @@ private fun PanelNaplate(m: EsirModel, predracun: IzdatRacun, zatvori: () -> Uni
                 fontSize = 13.sp,
             )
             Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
-                Izbor(NACINI_PLACANJA, nacin, { it.naziv }, kompaktno = true) { nacin = it; greska = null }
+                Izbor(m.dozvoljeniNacini, nacin, { it.naziv }, kompaktno = true) { nacin = it; greska = null }
             }
             if (nacin == NacinPlacanja.GOTOVINA) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {

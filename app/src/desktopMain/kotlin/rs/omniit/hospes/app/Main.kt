@@ -30,7 +30,7 @@ fun main() {
     application {
         Window(
             onCloseRequest = ::exitApplication,
-            title = "Hospes ESIR ${Esir.VERSION}",
+            title = "${Esir.PROIZVOD} ${Esir.VERSION}",
             state = rememberWindowState(width = 1360.dp, height = 900.dp),
         ) {
             App(okruzenje)

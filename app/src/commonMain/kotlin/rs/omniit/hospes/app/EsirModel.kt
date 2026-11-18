@@ -31,6 +31,11 @@ import rs.omniit.hospes.esir.KatalogCsv
 import rs.omniit.hospes.esir.LpfrVeza
 import rs.omniit.hospes.esir.NacinPlacanja
 import rs.omniit.hospes.esir.Obracun
+import rs.omniit.hospes.esir.naziv
+import rs.omniit.hospes.esir.noviSerijskiBroj
+import rs.omniit.hospes.esir.Otisak
+import rs.omniit.hospes.esir.OgranicenjePlacanja
+import rs.omniit.hospes.esir.Naplata
 import rs.omniit.hospes.esir.OtvorenPfr
 import rs.omniit.hospes.esir.PfrVeza
 import rs.omniit.hospes.esir.PoreskaStopa
@@ -72,6 +77,23 @@ enum class PosebanSlucaj(val naziv: String) {
 /** Šta bi ušlo u zbirnu mesečnu refundaciju korporacijskih kartica (9.4). */
 data class MesecnaRefundacija(val od: String, val doDana: String, val racuni: List<IzdatRacun>, val iznos: Decimal4)
 
+/** Jedan deo podeljenog plaćanja sa zadatim iznosom (npr. 1.000 karticom); ostatak ide na glavni način plaćanja. */
+data class DeoPlacanja(val nacin: NacinPlacanja, val iznos: String)
+
+/** Redosled načina plaćanja na ekranu (svih 7 iz „Tehničkog vodiča“). */
+val SVI_NACINI_PLACANJA = listOf(
+    NacinPlacanja.GOTOVINA,
+    NacinPlacanja.PLATNA_KARTICA,
+    NacinPlacanja.PRENOS_NA_RACUN,
+    NacinPlacanja.INSTANT_PLACANJE,
+    NacinPlacanja.CEK,
+    NacinPlacanja.VAUCER,
+    NacinPlacanja.DRUGO_BEZGOTOVINSKO,
+)
+
+/** Šifre opcionog polja kupca koje se unose na običnom računu (50 i 60 su za korporacijske kartice). */
+val SIFRE_OPCIONOG_POLJA = listOf("20", "21", "30", "31", "32", "33")
+
 /** Poruka korisniku ispod obračuna. */
 data class Poruka(val tekst: String, val greska: Boolean)
 
@@ -93,6 +115,13 @@ class EsirModel(private val okruzenje: Okruzenje, private val scope: CoroutineSc
 
     val folderPodataka: String get() = okruzenje.folderPodataka
 
+    init {
+        // Serijski broj instalacije (upitnik: operativne funkcije, pitanje 6) dodeljuje se pri prvom pokretanju.
+        if (podesavanja.serijskiBroj == null) sacuvaj(podesavanja.copy(serijskiBroj = noviSerijskiBroj()))
+    }
+
+    val serijskiBroj: String get() = podesavanja.serijskiBroj ?: "-"
+
     /** Kasir koji izdaje račune; ime se štampa na računu. Ako je kasir jedan, izabran je odmah. */
     var kasir by mutableStateOf(podesavanja.kasiri.singleOrNull())
         private set
@@ -112,8 +141,12 @@ class EsirModel(private val okruzenje: Okruzenje, private val scope: CoroutineSc
 
     val stavke = mutableStateListOf<Stavka>()
     var vrstaRacuna by mutableStateOf(VrstaRacuna.OBUKA)
+    /** Glavni način plaćanja: dobija ceo iznos, ili ostatak posle [dodatnaPlacanja]. */
     var nacinPlacanja by mutableStateOf(NacinPlacanja.GOTOVINA)
     var primljeno by mutableStateOf("")
+
+    /** Podeljeno plaćanje (upitnik: operativne funkcije, pitanje 8): delovi sa zadatim iznosom. */
+    val dodatnaPlacanja = mutableStateListOf<DeoPlacanja>()
 
     /** Poseban slučaj za račun koji se pravi (9.4, 9.7); posle izdavanja se vraća na „Ne“. */
     var posebanSlucaj by mutableStateOf(PosebanSlucaj.NE)
@@ -141,6 +174,10 @@ class EsirModel(private val okruzenje: Okruzenje, private val scope: CoroutineSc
     /** Kupac na računu (npr. „na firmu“: šifra 10 = PIB); prazan broj = račun bez kupca. */
     var sifraKupca by mutableStateOf("10")
     var brojKupca by mutableStateOf("")
+
+    /** Opciono polje kupca (šifarnik 9.8, npr. 20 = broj SNPDV); prazan broj = bez njega. Traži i ID kupca. */
+    var sifraOpcionog by mutableStateOf(SIFRE_OPCIONOG_POLJA.first())
+    var brojOpcionog by mutableStateOf("")
 
     /** Papir u štampaču (podešavanje kase); račun se štampa jednom, odmah posle izdavanja. */
     var papir by mutableStateOf(podesavanja.papir ?: SirinaPapira.MM80)
@@ -410,13 +447,90 @@ class EsirModel(private val okruzenje: Okruzenje, private val scope: CoroutineSc
         if (indeks in stavke.indices) stavke.removeAt(indeks)
     }
 
+    /** Ograničenje plaćanja ove kase (član 6, stav 2 Pravilnika), iz podešavanja. */
+    val ogranicenje: OgranicenjePlacanja get() = podesavanja.ogranicenjePlacanja ?: OgranicenjePlacanja.NEMA
+
+    /** Načini plaćanja koje kasa nudi (svih 7, ili bez kartice, čeka i instanta). */
+    val dozvoljeniNacini: List<NacinPlacanja> get() = SVI_NACINI_PLACANJA.filter { it in ogranicenje.dozvoljeni }
+
+    fun postaviOgranicenje(bezKarticeCekaIInstanta: Boolean) {
+        val novo = if (bezKarticeCekaIInstanta) OgranicenjePlacanja.BEZ_KARTICE_CEKA_I_INSTANTA else OgranicenjePlacanja.NEMA
+        sacuvaj(podesavanja.copy(ogranicenjePlacanja = novo.takeIf { it != OgranicenjePlacanja.NEMA }))
+        if (nacinPlacanja !in novo.dozvoljeni) nacinPlacanja = NacinPlacanja.GOTOVINA
+        dodatnaPlacanja.removeAll { it.nacin !in novo.dozvoljeni }
+    }
+
+    /** Dodaje deo podeljenog plaćanja (npr. karticom), sa iznosom koji kasir upisuje. */
+    fun dodajDeoPlacanja() {
+        val nacin = dozvoljeniNacini.firstOrNull { it != nacinPlacanja && dodatnaPlacanja.none { d -> d.nacin == it } }
+            ?: dozvoljeniNacini.first()
+        dodatnaPlacanja += DeoPlacanja(nacin, "")
+    }
+
+    fun promeniDeoPlacanja(indeks: Int, deo: DeoPlacanja) {
+        if (indeks in dodatnaPlacanja.indices) dodatnaPlacanja[indeks] = deo
+    }
+
+    fun ukloniDeoPlacanja(indeks: Int) {
+        if (indeks in dodatnaPlacanja.indices) dodatnaPlacanja.removeAt(indeks)
+    }
+
+    /** Delovi plaćanja za obračun: dodatni sa iznosom, glavni dobija ostatak. */
+    private fun deloviPlacanja(): List<Pair<NacinPlacanja, Decimal4?>> = dodatnaPlacanja.map { d ->
+        require(d.iznos.isNotBlank()) { "Upiši iznos za „${d.nacin.naziv}“" }
+        d.nacin to broj(d.iznos)
+    } + (nacinPlacanja to null)
+
+    /** Naplata [zaNaplatu] po izabranim načinima plaćanja; gotovina koju je kupac dao određuje kusur. */
+    private fun naplataZa(zaNaplatu: Decimal4): Naplata {
+        val delovi = deloviPlacanja()
+        val dato = primljeno.takeIf { it.isNotBlank() && delovi.any { d -> d.first == NacinPlacanja.GOTOVINA } }?.let(::broj)
+        return Obracun.naplata(zaNaplatu, delovi, dato, ogranicenje)
+    }
+
+    /** Ostatak koji ide na glavni način plaćanja, ili `null` ako iznosi nisu ispravni. */
+    fun ostatakNaplate(zaNaplatu: Decimal4): Decimal4? = runCatching {
+        zaNaplatu - dodatnaPlacanja.fold(Decimal4.NULA) { a, d -> a + broj(d.iznos.ifBlank { "0" }) }
+    }.getOrNull()
+
+    /** Kusur pri naplati [zaNaplatu], ili `null` ako nema gotovine, kupac nije dao više ili unos nije ispravan. */
+    fun kusurNaplate(zaNaplatu: Decimal4): Decimal4? = runCatching {
+        if (primljeno.isBlank()) return null
+        naplataZa(zaNaplatu).kusur.takeIf { it > Decimal4.NULA }
+    }.getOrNull()
+
+    /** Opciono polje kupca za račun, ili `null`; baca [IllegalArgumentException] ako nije ispravno ili nema kupca. */
+    private fun opcionoPolje(idKupca: String?): String? {
+        val broj = brojOpcionog.trim().takeIf { it.isNotEmpty() } ?: return null
+        val vrednost = "$sifraOpcionog:$broj"
+        SifarnikKupca.proveriOpcionoPolje(vrednost)?.let { throw IllegalArgumentException(it) }
+        require(idKupca != null) { "Opciono polje kupca traži i ID kupca" }
+        return vrednost
+    }
+
+    private fun ocistiNaplatuIKupca() {
+        primljeno = ""
+        dodatnaPlacanja.clear()
+        brojKupca = ""
+        brojOpcionog = ""
+    }
+
+    /** Tekst ispod računa (polje za reklamu), red po red. */
+    private fun redoviIspodRacuna(): List<String> =
+        podesavanja.tekstIspodRacuna?.lines()?.map { it.trimEnd() }?.dropWhile { it.isBlank() }?.dropLastWhile { it.isBlank() }.orEmpty()
+
+    /** Čuva tekst koji se štampa ispod „КРАЈ ФИСКАЛНОГ РАЧУНА“ (najviše 10 redova po 40 znakova). */
+    fun sacuvajTekstIspodRacuna(tekst: String): String? {
+        val redovi = tekst.trim().lines()
+        if (redovi.size > 10) return "Najviše 10 redova"
+        if (redovi.any { it.trimEnd().length > Otisak.KOLONA }) return "Red može da ima najviše ${Otisak.KOLONA} znakova (koliko staje na papir)"
+        sacuvaj(podesavanja.copy(tekstIspodRacuna = tekst.trim().ifEmpty { null }))?.let { return it }
+        porukaPodesavanja = Poruka("Tekst ispod računa je sačuvan.", greska = false)
+        return null
+    }
+
     /** Kusur ako je plaćanje gotovinom i kupac je dao više, inače `null`. */
-    val kusur: Decimal4?
-        get() = runCatching {
-            val dato = primljeno.takeIf { it.isNotBlank() && nacinPlacanja == NacinPlacanja.GOTOVINA }?.let(::broj)
-                ?: return null
-            Obracun.naplata(ukupno, listOf(nacinPlacanja to null), dato).kusur
-        }.getOrNull()
+    val kusur: Decimal4? get() = kusurNaplate(ukupno)
 
     fun izdaj() {
         bezKasira()?.let {
@@ -424,7 +538,7 @@ class EsirModel(private val okruzenje: Okruzenje, private val scope: CoroutineSc
             return
         }
         konacniPosao?.let { p ->
-            izdajKonacniRacun(p.poslednji, nacinPlacanja, primljeno)?.let { poruka = Poruka(it, greska = true) }
+            izdajKonacniRacun(p.poslednji, nacinPlacanja, primljeno, dodatniDelovi = true)?.let { poruka = Poruka(it, greska = true) }
             return
         }
         if (vrstaRacuna == VrstaRacuna.AVANS) {
@@ -445,8 +559,7 @@ class EsirModel(private val okruzenje: Okruzenje, private val scope: CoroutineSc
         val (zahtev, dodatak) = try {
             when (posebanSlucaj) {
                 PosebanSlucaj.NE -> {
-                    val dato = primljeno.takeIf { it.isNotBlank() && nacinPlacanja == NacinPlacanja.GOTOVINA }?.let(::broj)
-                    val naplata = Obracun.naplata(ukupno, listOf(nacinPlacanja to null), dato)
+                    val naplata = naplataZa(ukupno)
                     ZahtevZaRacun(
                         invoiceType = vrstaRacuna,
                         transactionType = TipTransakcije.PRODAJA,
@@ -454,10 +567,12 @@ class EsirModel(private val okruzenje: Okruzenje, private val scope: CoroutineSc
                         items = stavke.toList(),
                         cashier = kasir,
                         buyerId = kupac,
-                    ) to if (naplata.kusur > Decimal4.NULA) listOf("Повраћај:" + naplata.kusur.zaStampu().padStart(31)) else emptyList()
+                        buyerCostCenterId = opcionoPolje(kupac),
+                    ) to listOfNotNull(redKusura(naplata.kusur))
                 }
                 // 9.7: napomena ide u „reklamno polje“, deo računa koji štampa ESIR.
-                PosebanSlucaj.BEZ_NAKNADE -> PrometBezNaknade.zahtev(stavke.toList(), kasir, kupac) to listOf(PrometBezNaknade.NAPOMENA)
+                PosebanSlucaj.BEZ_NAKNADE -> PrometBezNaknade.zahtev(stavke.toList(), kasir, kupac)
+                    .copy(buyerCostCenterId = opcionoPolje(kupac)) to listOf(PrometBezNaknade.NAPOMENA)
                 PosebanSlucaj.KORPORATIVNA ->
                     KorporativnaKartica.zahtevZaProdaju(stavke.toList(), korporativniPib.trim(), korporativnaKartica.trim(), kasir) to emptyList()
             }
@@ -471,8 +586,7 @@ class EsirModel(private val okruzenje: Okruzenje, private val scope: CoroutineSc
             poruka = rezultat.poruka
             if (rezultat.izdat != null) {
                 stavke.clear()
-                primljeno = ""
-                brojKupca = ""
+                ocistiNaplatuIKupca()
                 posebanSlucaj = PosebanSlucaj.NE
                 korporativnaKartica = ""
             }
@@ -595,6 +709,12 @@ class EsirModel(private val okruzenje: Okruzenje, private val scope: CoroutineSc
             brojKupca = it[1]
         }
         avansOznaka = posao.poslednji.zahtev.items.firstOrNull()?.labels?.firstOrNull()
+        posao.lanac.firstNotNullOfOrNull { it.zahtev.buyerCostCenterId }?.split(":", limit = 2)?.takeIf { it.size == 2 }?.let {
+            if (it[0] in SIFRE_OPCIONOG_POLJA) {
+                sifraOpcionog = it[0]
+                brojOpcionog = it[1]
+            }
+        }
     }
 
     /** Konačni račun za ovaj posao se pravi levo: vrsta Promet, stavke po punoj ceni, plaća se ostatak. */
@@ -644,16 +764,17 @@ class EsirModel(private val okruzenje: Okruzenje, private val scope: CoroutineSc
                 require(datum <= okruzenje.danas()) { "Datum uplate ne može biti posle današnjeg dana" }
                 vreme.takeIf { datum < okruzenje.danas() }
             }
-            val dato = primljeno.takeIf { it.isNotBlank() && nacinPlacanja == NacinPlacanja.GOTOVINA }?.let(::broj)
-            val naplata = Obracun.naplata(iznos, listOf(nacinPlacanja to null), dato)
-            Avans.zahtevZaAvans(
+            val naplata = naplataZa(iznos)
+            val zahtev = Avans.zahtevZaAvans(
                 uplate = listOf(AvansnaUplata(sifra, oznaka, iznos)),
                 placanje = naplata.placanja,
                 idKupca = kupac,
                 prethodni = prethodniAvans,
                 kasir = kasir,
                 datumUplate = esirVreme,
-            ) to listOfNotNull(redKusura(naplata.kusur))
+            )
+            val opciono = opcionoPolje(zahtev.buyerId) ?: prethodniAvans?.zahtev?.buyerCostCenterId?.takeIf { zahtev.buyerId == prethodniAvans?.zahtev?.buyerId }
+            zahtev.copy(buyerCostCenterId = opciono) to listOfNotNull(redKusura(naplata.kusur))
         } catch (e: IllegalArgumentException) {
             poruka = Poruka(e.message ?: "Neispravan avans", greska = true)
             return
@@ -664,8 +785,7 @@ class EsirModel(private val okruzenje: Okruzenje, private val scope: CoroutineSc
             if (r.izdat != null) {
                 avansIznos = ""
                 avansDatumUplate = ""
-                primljeno = ""
-                brojKupca = ""
+                ocistiNaplatuIKupca()
                 prethodniAvans = null
             }
         }
@@ -676,7 +796,7 @@ class EsirModel(private val okruzenje: Okruzenje, private val scope: CoroutineSc
      * prvo se izdaje Avans Refundacija za sve avanse (ostaje u radnji), pa Promet Prodaja na kojoj PFR-u ide samo ostatak.
      * Vraća grešku (ništa nije poslato PFR-u) ili `null` ako je rad sa PFR-om započet.
      */
-    fun izdajKonacniRacun(avans: IzdatRacun, nacin: NacinPlacanja, primljeno: String = ""): String? {
+    fun izdajKonacniRacun(avans: IzdatRacun, nacin: NacinPlacanja, primljeno: String = "", dodatniDelovi: Boolean = false): String? {
         bezKasira()?.let { return it }
         val posao = avansniPosao(avans) ?: return "Račun ${avans.racun.invoiceNumber} nije avans"
         if (posao.ponisten) return "Avansni posao je poništen"
@@ -691,15 +811,18 @@ class EsirModel(private val okruzenje: Okruzenje, private val scope: CoroutineSc
             ?: brojKupca.trim().takeIf { it.isNotEmpty() }?.let { "$sifraKupca:$it" }
             ?: return "Unesi kupca (levo, „Kupac“): zatvaranje avansa traži ID kupca"
         SifarnikKupca.proveriIdKupca(kupac)?.let { return it }
-        val kusur = try {
-            val dato = primljeno.takeIf { it.isNotBlank() && nacin == NacinPlacanja.GOTOVINA && preostalo > Decimal4.NULA }?.let(::broj)
-            Obracun.naplata(preostalo, listOf(nacin to null), dato).kusur
+        val (naplata, opciono) = try {
+            val delovi = (if (dodatniDelovi) deloviPlacanja().dropLast(1) else emptyList()) + (nacin to null)
+            val dato = primljeno.takeIf { it.isNotBlank() && preostalo > Decimal4.NULA && delovi.any { d -> d.first == NacinPlacanja.GOTOVINA } }?.let(::broj)
+            Obracun.naplata(preostalo, delovi, dato, ogranicenje) to
+                (posao.lanac.firstNotNullOfOrNull { it.zahtev.buyerCostCenterId } ?: opcionoPolje(kupac))
         } catch (e: IllegalArgumentException) {
             return e.message ?: "Neispravna naplata"
         }
+        val kusur = naplata.kusur
         val zahtevZatvaranja = if (posao.zatvaranje == null) {
             try {
-                Avans.zahtevZaZatvaranje(posao.lanac, kupac, kasir)
+                Avans.zahtevZaZatvaranje(posao.lanac, kupac, kasir).copy(buyerCostCenterId = opciono)
             } catch (e: IllegalArgumentException) {
                 return e.message
             }
@@ -725,8 +848,12 @@ class EsirModel(private val okruzenje: Okruzenje, private val scope: CoroutineSc
                 return@posao
             }
             val dodatak = konacni.dodatniRedovi + listOfNotNull(redKusura(kusur)) + konacni.reklamnoPolje
+            val zahtevKonacnog = konacni.zahtev.copy(
+                payment = naplata.placanja,
+                buyerCostCenterId = zatvaranje.zahtev.buyerCostCenterId ?: opciono,
+            )
             val r = try {
-                izdajZahtev(veza, konacni.zahtev, dodatak)
+                izdajZahtev(veza, zahtevKonacnog, dodatak)
             } catch (e: EsirGreska) {
                 Izdavanje(null, Poruka(e.message ?: e.toString(), greska = true))
             }
@@ -741,8 +868,7 @@ class EsirModel(private val okruzenje: Okruzenje, private val scope: CoroutineSc
             }
             if (r.izdat != null) {
                 stavke.clear()
-                this@EsirModel.primljeno = ""
-                brojKupca = ""
+                ocistiNaplatuIKupca()
                 konacniPosao = null
             }
         }
@@ -865,7 +991,7 @@ class EsirModel(private val okruzenje: Okruzenje, private val scope: CoroutineSc
         val zaNaplatu = Obracun.ukupno(predracun.zahtev.items)
         val (zahtev, naplata) = try {
             val dato = primljeno.takeIf { it.isNotBlank() && nacin == NacinPlacanja.GOTOVINA }?.let(::broj)
-            val naplata = Obracun.naplata(zaNaplatu, listOf(nacin to null), dato)
+            val naplata = Obracun.naplata(zaNaplatu, listOf(nacin to null), dato, ogranicenje)
             predracun.zahtevZaPrometIzPredracuna(naplata.placanja) to naplata
         } catch (e: IllegalArgumentException) {
             return e.message ?: "Predračun nije moguće naplatiti"
@@ -905,13 +1031,15 @@ class EsirModel(private val okruzenje: Okruzenje, private val scope: CoroutineSc
      */
     private suspend fun izdajZahtev(veza: PfrVeza, zahtevBezKasira: ZahtevZaRacun, dodatak: List<String> = emptyList()): Izdavanje {
         val zahtev = zahtevBezKasira.copy(cashier = kasir)
+        val reklama = redoviIspodRacuna()
+        val ceoDodatak = dodatak + (if (dodatak.isNotEmpty() && reklama.isNotEmpty()) listOf("") else emptyList()) + reklama
         val jezik = PfrVeza.JEZIK_SRPSKI_CIRILICA.takeIf { it in status?.supportedLanguages.orEmpty() }
             ?: status?.supportedLanguages?.firstOrNull()
         val requestId = noviRequestId()
         return when (val r = veza.izdajRacun(zahtev, requestId, jezik)) {
             is RezultatRacuna.Izdat -> {
                 val izdat = IzdatRacun(requestId, zahtev, r.racun)
-                okruzenje.zurnal.sacuvaj(izdat, dodatak)
+                okruzenje.zurnal.sacuvaj(izdat, ceoDodatak)
                 prikazi(izdat)
                 ucitajZurnal()
                 val naknadno = if (r.pronadjenNaknadno) " (pronađen po RequestId posle prekida veze)" else ""

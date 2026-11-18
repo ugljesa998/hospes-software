@@ -36,6 +36,6 @@ compose.desktop {
     application {
         mainClass = "rs.omniit.hospes.app.MainKt"
         // Naziv u traci menija na macOS-u (opcija postoji samo na macOS-u).
-        if (System.getProperty("os.name").startsWith("Mac")) jvmArgs += "-Xdock:name=Hospes ESIR"
+        if (System.getProperty("os.name").startsWith("Mac")) jvmArgs += "-Xdock:name=Hospes POS"
     }
 }

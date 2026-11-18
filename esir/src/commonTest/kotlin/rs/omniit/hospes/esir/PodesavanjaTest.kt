@@ -70,4 +70,17 @@ class PodesavanjaTest {
         assertEquals("Ime kasira može da ima najviše 50 znakova", Kasiri.proveri("A".repeat(51)))
         assertEquals(null, Kasiri.proveri("Marko Marković"))
     }
+
+    @Test
+    fun placanjaTekstISerijskiBroj() {
+        val p = Podesavanja(
+            ogranicenjePlacanja = OgranicenjePlacanja.BEZ_KARTICE_CEKA_I_INSTANTA,
+            tekstIspodRacuna = "Hvala na poseti!\nwww.hospes.rs",
+            serijskiBroj = "HP-7KQ2-M9XD",
+        )
+        assertEquals(p, Podesavanja.izJsona(p.uJson()))
+        val s = noviSerijskiBroj(kotlin.random.Random(1))
+        assertTrue(Regex("""HP-[2-9A-HJ-NP-Z]{4}-[2-9A-HJ-NP-Z]{4}""").matches(s), s)
+        assertTrue(noviSerijskiBroj() != noviSerijskiBroj())
+    }
 }
