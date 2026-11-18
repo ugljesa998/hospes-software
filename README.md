@@ -37,8 +37,12 @@ U Podešavanjima „Načini plaćanja“: kasa bez kartice, čeka i instanta (Pr
 Kupac na računu („na firmu“): ispod plaćanja „Kupac“, šifra po šifarniku 9.8 (10 = PIB, 9 cifara) i broj, uz opciono
 polje kupca (šifre 20–33); važi za jedan račun.
 
-Podešavanja, „O programu“: proizvođač, proizvod (Hospes POS), verzija, serijski broj instalacije (dodeljuje se pri prvom
-pokretanju). „Tekst ispod računa“: štampa se ispod „КРАЈ ФИСКАЛНОГ РАЧУНА“ na svakom računu (polje za reklamu).
+Svaki račun (aplikacija i komandna linija) nosi „ЕСИР број“ `1795/0.0.1` = ИБ број prijave/verzija softvera
+(PURS tehničko uputstvo v1.17, upitnik „Текстуални приказ“, pitanje 5); PFR ga štampa u zaglavlju. Nova verzija posle
+odobrenja ide na novu prijavu (uputstvo 7.9): menjaju se `Esir.IB_BROJ` i `Esir.VERSION`.
+
+Podešavanja, „O programu“: proizvođač, proizvod (Hospes POS), verzija, ESIR broj, serijski broj instalacije (dodeljuje se
+pri prvom pokretanju). „Tekst ispod računa“: štampa se ispod „КРАЈ ФИСКАЛНОГ РАЧУНА“ na svakom računu (polje za reklamu).
 
 Radnje nad računom iz žurnala (izaberi račun, dugmad ispod naslova):
 - „Naplati“ (predračun): Promet Prodaja sa istim stavkama, uz poziv na predračun; predračun se naplaćuje jednom.

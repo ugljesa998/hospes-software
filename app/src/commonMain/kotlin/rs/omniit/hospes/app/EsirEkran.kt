@@ -599,7 +599,7 @@ private fun KarticaOProgramu(m: EsirModel) {
                 "Verzija softvera" to Esir.VERSION,
                 "Serijski broj" to m.serijskiBroj,
                 "Protokol sa PFR-om" to "TaxCore ${Esir.PROTOCOL}",
-                "ESIR broj" to "dodeljuje Poreska uprava odobrenjem",
+                "ESIR broj" to "${Esir.BROJ} (ИБ број prijave/verzija)",
             ).forEach { (naziv, vrednost) ->
                 Row {
                     Text(naziv, Modifier.width(170.dp), color = Color.DarkGray, fontSize = 13.sp)

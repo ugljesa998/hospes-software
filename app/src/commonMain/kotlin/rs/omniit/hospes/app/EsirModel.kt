@@ -17,6 +17,7 @@ import rs.omniit.hospes.esir.AvansnaUplata
 import rs.omniit.hospes.esir.AvansniPosao
 import rs.omniit.hospes.esir.SifraAvansa
 import rs.omniit.hospes.esir.Decimal4
+import rs.omniit.hospes.esir.Esir
 import rs.omniit.hospes.esir.EsirGreska
 import rs.omniit.hospes.esir.FilterZurnala
 import rs.omniit.hospes.esir.IzdatRacun
@@ -1030,7 +1031,7 @@ class EsirModel(private val okruzenje: Okruzenje, private val scope: CoroutineSc
      * Kasir na računu je uvek kasir koji ga sada izdaje (i kod refundacije, kopije i naplate predračuna).
      */
     private suspend fun izdajZahtev(veza: PfrVeza, zahtevBezKasira: ZahtevZaRacun, dodatak: List<String> = emptyList()): Izdavanje {
-        val zahtev = zahtevBezKasira.copy(cashier = kasir)
+        val zahtev = zahtevBezKasira.copy(cashier = kasir, invoiceNumber = Esir.BROJ)
         val reklama = redoviIspodRacuna()
         val ceoDodatak = dodatak + (if (dodatak.isNotEmpty() && reklama.isNotEmpty()) listOf("") else emptyList()) + reklama
         val jezik = PfrVeza.JEZIK_SRPSKI_CIRILICA.takeIf { it in status?.supportedLanguages.orEmpty() }

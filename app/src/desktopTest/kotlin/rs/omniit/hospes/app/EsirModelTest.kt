@@ -159,6 +159,7 @@ class EsirModelTest {
             .bytes().decodeToString()
         val placanje = Json.parseToJsonElement(telo).jsonObject["payment"]!!.jsonArray.single().jsonObject
         assertEquals("675", placanje["amount"].toString(), "PFR-u ide iznos koji ostaje u kasi, ne 1000")
+        assertEquals("1795/0.0.1", Json.parseToJsonElement(telo).jsonObject["invoiceNumber"]!!.jsonPrimitive.content, "ESIR broj")
         assertEquals("Cash", placanje["paymentType"]!!.jsonPrimitive.content)
     }
 

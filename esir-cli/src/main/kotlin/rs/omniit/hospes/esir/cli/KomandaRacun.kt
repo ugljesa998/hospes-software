@@ -4,6 +4,7 @@ import rs.omniit.hospes.esir.Decimal4
 import rs.omniit.hospes.esir.EsirGreska
 import rs.omniit.hospes.esir.EsirHttp
 import rs.omniit.hospes.esir.FiskalizovanRacun
+import rs.omniit.hospes.esir.Esir
 import rs.omniit.hospes.esir.FolderZurnal
 import rs.omniit.hospes.esir.IzdatRacun
 import rs.omniit.hospes.esir.NacinPlacanja
@@ -251,6 +252,8 @@ internal suspend fun izdajIPrikazi(
     red("RequestId", requestId)
     println()
 
+    // „ЕСИР број“ (ИБ број/verzija) na svakom računu.
+    val zahtev = zahtev.copy(invoiceNumber = zahtev.invoiceNumber ?: Esir.BROJ)
     when (val rezultat = veza.izdajRacun(zahtev, requestId, jezik)) {
         is RezultatRacuna.Izdat -> {
             if (rezultat.pronadjenNaknadno) {
