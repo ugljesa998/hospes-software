@@ -27,7 +27,11 @@ Gradle ne treba instalirati: `./gradlew` sam preuzima odgovarajuću verziju.
 ./gradlew :esir-cli:run         # pokretanje komandne linije (spisak komandi)
 ./gradlew -q :esir-cli:run --args="status"   # stanje L-PFR-a, šifre stanja, poreske stope
 ./gradlew -q :esir-cli:run --args="pin"      # PIN iz config/local.json, šalje se najviše jednom
-./gradlew -q :esir-cli:run --args="racun"    # Training Sale: „Test kafa“ 1 × 300 RSD, gotovina
+./gradlew -q :esir-cli:run --args="racun"    # Obuka Prodaja: „Test kafa“ 1 × 300 RSD, gotovina
+./gradlew -q :esir-cli:run --args="racun --vrsta promet"                          # Promet Prodaja
+./gradlew -q :esir-cli:run --args="kopija <PFR broj računa>"                      # kopija računa vrste Promet
+./gradlew -q :esir-cli:run --args="refundacija <PFR broj računa> --kupac 20:123456789"   # refundacija uz ID kupca
+./gradlew -q :esir-cli:run --args="lista"    # računi sačuvani u racuni/
 ./gradlew -q :esir-cli:run --args="provera <RequestId>"   # da li je poslednji račun sa tim RequestId izdat
 ```
 

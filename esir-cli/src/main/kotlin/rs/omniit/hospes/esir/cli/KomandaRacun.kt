@@ -1,112 +1,114 @@
 package rs.omniit.hospes.esir.cli
 
+import io.ktor.client.HttpClient
 import rs.omniit.hospes.esir.Decimal4
 import rs.omniit.hospes.esir.EsirGreska
 import rs.omniit.hospes.esir.EsirHttp
 import rs.omniit.hospes.esir.FiskalizovanRacun
+import rs.omniit.hospes.esir.IzdatRacun
 import rs.omniit.hospes.esir.LpfrVeza
 import rs.omniit.hospes.esir.NacinPlacanja
 import rs.omniit.hospes.esir.Placanje
 import rs.omniit.hospes.esir.RezultatRacuna
 import rs.omniit.hospes.esir.SifreStanja
+import rs.omniit.hospes.esir.StatusOdgovor
 import rs.omniit.hospes.esir.Stavka
 import rs.omniit.hospes.esir.TipTransakcije
 import rs.omniit.hospes.esir.VrstaRacuna
 import rs.omniit.hospes.esir.ZahtevZaRacun
 import rs.omniit.hospes.esir.bezbedanPrikazAdrese
+import rs.omniit.hospes.esir.naziv
 import rs.omniit.hospes.esir.napraviZaJvm
 import rs.omniit.hospes.esir.noviRequestId
 import java.io.File
 import java.util.Base64
 
-/** Folder u koji se čuvaju izdati računi (tekst, QR kod, ceo odgovor). Nije u Git-u. */
+/** Folder u koji se čuvaju izdati računi (zahtev + odgovor, tekst, QR kod). Nije u Git-u. */
 private val folderRacuna = File("racuni")
 
 /**
- * `racun [--oznaka A]`: izdaje Training Sale račun „Test kafa“, 1 × 300 RSD, gotovina.
- * Isto kao treći `curl` test, ali iz ESIR modula, sa zaštitom od duplog računa.
+ * `racun [--vrsta obuka|promet] [--oznaka A]`: izdaje račun „Test kafa“, 1 × 300 RSD, gotovina.
+ * Podrazumevano je Obuka Prodaja, kao treći `curl` test.
  */
 internal suspend fun komandaRacun(argumenti: List<String>) {
-    val podesavanja = ucitajLpfrPodesavanja()
+    val vrsta = when (val v = vrednostOpcije(argumenti, "--vrsta") ?: "obuka") {
+        "obuka" -> VrstaRacuna.OBUKA
+        "promet" -> VrstaRacuna.PROMET
+        else -> prekini("Nepoznata vrsta „$v“. Dozvoljeno: obuka, promet")
+    }
     val trazenaOznaka = vrednostOpcije(argumenti, "--oznaka") ?: "A"
-    println("L-PFR: ${bezbedanPrikazAdrese(podesavanja.baseUrl)} (token iz adrese se ne ispisuje)")
-    println()
 
-    EsirHttp.napraviZaJvm().use { http ->
-        val veza = LpfrVeza(podesavanja.baseUrl, http)
-
-        val status = try {
-            veza.status()
-        } catch (e: EsirGreska) {
-            prekini(e.message ?: e.toString())
-        }
-        if (status.isPinRequired == true) {
-            prekini("L-PFR traži PIN. Prvo pokreni:  ./gradlew -q :esir-cli:run --args=\"pin\"")
-        }
-
+    saLpfrom { veza, status ->
         val stope = status.currentTaxRates?.taxCategories.orEmpty().flatMap { it.taxRates }
         val stopa = stope.firstOrNull { it.label == trazenaOznaka }
             ?: prekini(
                 "Poreska oznaka $trazenaOznaka ne postoji u važećim stopama L-PFR-a. " +
                     "Dostupne: ${stope.joinToString(", ") { "${it.label} (${it.rate}%)" }}",
             )
-        val jezik = LpfrVeza.JEZIK_SRPSKI_CIRILICA.takeIf { it in status.supportedLanguages }
-            ?: status.supportedLanguages.firstOrNull()
-
         val iznos = Decimal4.parse("300")
         val zahtev = ZahtevZaRacun(
-            invoiceType = VrstaRacuna.OBUKA,
+            invoiceType = vrsta,
             transactionType = TipTransakcije.PRODAJA,
             payment = listOf(Placanje(iznos, NacinPlacanja.GOTOVINA)),
-            items = listOf(
-                Stavka(
-                    name = "Test kafa",
-                    quantity = Decimal4.parse("1"),
-                    unitPrice = iznos,
-                    totalAmount = iznos,
-                    labels = listOf(stopa.label),
-                ),
-            ),
+            items = listOf(Stavka("Test kafa", Decimal4.parse("1"), iznos, iznos, listOf(stopa.label))),
             cashier = "Hospes test",
         )
-        val requestId = noviRequestId()
-
-        println("Izdajem:     Obuka – Prodaja, „Test kafa“ 1 × 300 RSD, gotovina")
         red("Poreska oznaka", "${stopa.label} (${stopa.rate}%, iz statusa L-PFR-a)")
-        red("Jezik računa", jezik)
-        red("RequestId", requestId)
-        println()
+        izdajIPrikazi(veza, status, zahtev, "${vrsta.naziv} Prodaja: „Test kafa“ 1 × 300 RSD, gotovina")
+    }
+}
 
-        when (val rezultat = veza.izdajRacun(zahtev, requestId, jezik)) {
-            is RezultatRacuna.Izdat -> {
-                if (rezultat.pronadjenNaknadno) {
-                    println("Veza je prekinuta, ali je račun pronađen po RequestId. Nije izdat dvaput.")
-                }
-                println("RAČUN JE IZDAT.")
-                ispisiIRacunSacuvaj(rezultat.racun)
-            }
-            is RezultatRacuna.Odbijen -> {
-                val opis = rezultat.greska?.let { g ->
-                    buildString {
-                        append(g.message ?: "bez poruke")
-                        g.modelState.forEach { polje ->
-                            polje.errors.forEach { kod ->
-                                append("\n  ${polje.property.ifEmpty { "(ceo zahtev)" }}: $kod ${SifreStanja.za(kod).opis}")
-                            }
-                        }
-                    }
-                } ?: rezultat.telo
-                prekini("L-PFR je odbio račun (HTTP ${rezultat.httpStatus}). Račun NIJE izdat.\n$opis")
-            }
-            is RezultatRacuna.NijeIzdat ->
-                prekini("Račun NIJE izdat: ${rezultat.razlog}. Bezbedno je pokušati ponovo.")
-            is RezultatRacuna.NepoznatoStanje ->
-                prekini(
-                    "NE ZNA SE da li je račun izdat: ${rezultat.razlog}.\n" +
-                        "Ne izdaj račun ponovo. Prvo proveri:\n" +
-                        "  ./gradlew -q :esir-cli:run --args=\"provera ${rezultat.requestId}\"",
-                )
-        }
+/** `refundacija <PFR broj računa> --kupac 20:123456789`: refundacija celog sačuvanog računa. */
+internal suspend fun komandaRefundacija(argumenti: List<String>) {
+    val broj = argumenti.getOrNull(1)?.takeUnless { it.startsWith("--") }
+        ?: prekini("Upotreba: refundacija <PFR broj računa> --kupac <šifra:broj>, npr. --kupac 20:123456789")
+    val kupac = vrednostOpcije(argumenti, "--kupac")
+        ?: prekini("Refundacija traži ID kupca koji prima novac, npr. --kupac 20:123456789 (20 = broj lične karte)")
+    val original = ucitajIzdat(broj)
+    val zahtev = try {
+        original.zahtevZaRefundaciju(kupac)
+    } catch (e: IllegalArgumentException) {
+        prekini(e.message ?: e.toString())
+    }
+
+    saLpfrom { veza, status ->
+        izdajIPrikazi(veza, status, zahtev, "${zahtev.invoiceType.naziv} Refundacija za $broj, kupac $kupac")
+    }
+}
+
+/** `kopija <PFR broj računa>`: kopija sačuvanog računa vrste Promet (prodaje ili refundacije). */
+internal suspend fun komandaKopija(argumenti: List<String>) {
+    val broj = argumenti.getOrNull(1) ?: prekini("Upotreba: kopija <PFR broj računa>")
+    val original = ucitajIzdat(broj)
+    val zahtev = try {
+        original.zahtevZaKopiju()
+    } catch (e: IllegalArgumentException) {
+        prekini(e.message ?: e.toString())
+    }
+
+    saLpfrom { veza, status ->
+        izdajIPrikazi(veza, status, zahtev, "Kopija ${zahtev.transactionType.naziv} za $broj")
+    }
+}
+
+/** `lista`: računi sačuvani u folderu `racuni/`, od najnovijeg. */
+internal fun komandaLista() {
+    val zapisi = folderRacuna.listFiles { f -> f.name.endsWith(".json") }.orEmpty()
+        .mapNotNull { f -> runCatching { EsirHttp.json.decodeFromString(IzdatRacun.serializer(), f.readText()) }.getOrNull() }
+        .sortedByDescending { it.racun.totalCounter ?: 0 }
+    if (zapisi.isEmpty()) {
+        println("Nema sačuvanih računa u ${folderRacuna.path}/.")
+        return
+    }
+    println("PFR broj računa".padEnd(26) + "Brojač".padEnd(10) + "Vrsta".padEnd(24) + "Ukupno".padEnd(10) + "Poziva se na")
+    zapisi.forEach { z ->
+        println(
+            z.racun.invoiceNumber.padEnd(26) +
+                (z.racun.invoiceCounter ?: "-").padEnd(10) +
+                z.oznaka.padEnd(24) +
+                (z.racun.totalAmount?.toString() ?: "-").padEnd(10) +
+                (z.zahtev.referentDocumentNumber ?: ""),
+        )
     }
 }
 
@@ -128,12 +130,76 @@ internal suspend fun komandaProvera(argumenti: List<String>) {
             println("Napomena: L-PFR čuva samo poslednji račun, pa ova provera važi za poslednji izdati račun.")
         } else {
             println("Račun sa RequestId $requestId JESTE izdat.")
-            ispisiIRacunSacuvaj(racun)
+            ispisiRacun(racun)
         }
     }
 }
 
-private fun ispisiIRacunSacuvaj(racun: FiskalizovanRacun) {
+/** Učita podešavanja, otvori vezu, proveri status i PIN, pa izvrši [blok]. */
+private suspend fun saLpfrom(blok: suspend (LpfrVeza, StatusOdgovor) -> Unit) {
+    val podesavanja = ucitajLpfrPodesavanja()
+    println("L-PFR: ${bezbedanPrikazAdrese(podesavanja.baseUrl)} (token iz adrese se ne ispisuje)")
+    println()
+
+    EsirHttp.napraviZaJvm().use { http: HttpClient ->
+        val veza = LpfrVeza(podesavanja.baseUrl, http)
+        val status = try {
+            veza.status()
+        } catch (e: EsirGreska) {
+            prekini(e.message ?: e.toString())
+        }
+        if (status.isPinRequired == true) {
+            prekini("L-PFR traži PIN. Prvo pokreni:  ./gradlew -q :esir-cli:run --args=\"pin\"")
+        }
+        blok(veza, status)
+    }
+}
+
+private suspend fun izdajIPrikazi(veza: LpfrVeza, status: StatusOdgovor, zahtev: ZahtevZaRacun, opis: String) {
+    val jezik = LpfrVeza.JEZIK_SRPSKI_CIRILICA.takeIf { it in status.supportedLanguages }
+        ?: status.supportedLanguages.firstOrNull()
+    val requestId = noviRequestId()
+
+    println("Izdajem:              $opis")
+    red("Jezik računa", jezik)
+    red("RequestId", requestId)
+    println()
+
+    when (val rezultat = veza.izdajRacun(zahtev, requestId, jezik)) {
+        is RezultatRacuna.Izdat -> {
+            if (rezultat.pronadjenNaknadno) {
+                println("Veza je prekinuta, ali je račun pronađen po RequestId. Nije izdat dvaput.")
+            }
+            println("RAČUN JE IZDAT.")
+            val izdat = IzdatRacun(requestId, zahtev, rezultat.racun)
+            ispisiRacun(izdat.racun)
+            sacuvaj(izdat)
+        }
+        is RezultatRacuna.Odbijen -> {
+            val opisGreske = rezultat.greska?.let { g ->
+                buildString {
+                    append(g.message ?: "bez poruke")
+                    g.modelState.forEach { polje ->
+                        polje.errors.forEach { kod ->
+                            append("\n  ${polje.property.ifEmpty { "(ceo zahtev)" }}: $kod ${SifreStanja.za(kod).opis}")
+                        }
+                    }
+                }
+            } ?: rezultat.telo
+            prekini("L-PFR je odbio račun (HTTP ${rezultat.httpStatus}). Račun NIJE izdat.\n$opisGreske")
+        }
+        is RezultatRacuna.NijeIzdat ->
+            prekini("Račun NIJE izdat: ${rezultat.razlog}. Bezbedno je pokušati ponovo.")
+        is RezultatRacuna.NepoznatoStanje ->
+            prekini(
+                "NE ZNA SE da li je račun izdat: ${rezultat.razlog}.\n" +
+                    "Ne izdaj račun ponovo. Prvo proveri:\n" +
+                    "  ./gradlew -q :esir-cli:run --args=\"provera ${rezultat.requestId}\"",
+            )
+    }
+}
+
+private fun ispisiRacun(racun: FiskalizovanRacun) {
     red("PFR broj računa", racun.invoiceNumber)
     red("Brojač računa", racun.invoiceCounter)
     red("PFR vreme", racun.sdcDateTime)
@@ -143,18 +209,32 @@ private fun ispisiIRacunSacuvaj(racun: FiskalizovanRacun) {
     }
     red("Link za proveru", racun.verificationUrl)
     red("Poruka PFR-a", racun.messages)
-
-    folderRacuna.mkdirs()
-    val ime = racun.invoiceNumber.replace(Regex("[^A-Za-z0-9-]"), "_")
-    File(folderRacuna, "$ime.json").writeText(EsirHttp.json.encodeToString(FiskalizovanRacun.serializer(), racun))
-    racun.journal?.let { File(folderRacuna, "$ime.txt").writeText(it) }
-    racun.verificationQRCode?.let { File(folderRacuna, "$ime.gif").writeBytes(Base64.getDecoder().decode(it)) }
-
     println()
     println("Tekst računa (journal), onako kako ga je vratio L-PFR:")
     println(racun.journal ?: "(L-PFR nije vratio tekst računa)")
+}
+
+private fun imeFajla(brojRacuna: String) = brojRacuna.replace(Regex("[^A-Za-z0-9-]"), "_")
+
+private fun sacuvaj(izdat: IzdatRacun) {
+    folderRacuna.mkdirs()
+    val ime = imeFajla(izdat.racun.invoiceNumber)
+    File(folderRacuna, "$ime.json").writeText(EsirHttp.json.encodeToString(IzdatRacun.serializer(), izdat))
+    izdat.racun.journal?.let { File(folderRacuna, "$ime.txt").writeText(it) }
+    izdat.racun.verificationQRCode?.let { File(folderRacuna, "$ime.gif").writeBytes(Base64.getDecoder().decode(it)) }
     println()
-    println("Sačuvano u folderu ${folderRacuna.path}/: $ime.txt (tekst), $ime.gif (QR kod), $ime.json (ceo odgovor)")
+    println("Sačuvano u ${folderRacuna.path}/: $ime.json (zahtev i odgovor), $ime.txt (tekst), $ime.gif (QR kod)")
+}
+
+private fun ucitajIzdat(brojRacuna: String): IzdatRacun {
+    val fajl = File(folderRacuna, "${imeFajla(brojRacuna)}.json")
+    if (!fajl.exists()) prekini("Nema sačuvanog računa $brojRacuna u ${folderRacuna.path}/. Spisak: komanda lista")
+    return runCatching { EsirHttp.json.decodeFromString(IzdatRacun.serializer(), fajl.readText()) }.getOrElse {
+        prekini(
+            "Račun $brojRacuna je sačuvan starijom verzijom, bez zahteva, pa za njega ne može refundacija ni kopija. " +
+                "Izdaj novi račun.",
+        )
+    }
 }
 
 private fun vrednostOpcije(argumenti: List<String>, ime: String): String? {

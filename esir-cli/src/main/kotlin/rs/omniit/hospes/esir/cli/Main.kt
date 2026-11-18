@@ -27,6 +27,9 @@ fun main(args: Array<String>) {
         "status" -> runBlocking { komandaStatus() }
         "pin" -> runBlocking { komandaPin() }
         "racun" -> runBlocking { komandaRacun(args.toList()) }
+        "refundacija" -> runBlocking { komandaRefundacija(args.toList()) }
+        "kopija" -> runBlocking { komandaKopija(args.toList()) }
+        "lista" -> komandaLista()
         "provera" -> runBlocking { komandaProvera(args.toList()) }
         else -> {
             println("Nepoznata komanda: $komanda")
@@ -34,16 +37,22 @@ fun main(args: Array<String>) {
             exitProcess(2)
         }
     }
+    // OkHttp drži svoje niti aktivnim još ~60 s posle poslednjeg zahteva, pa bi komanda „visila“ minut.
+    exitProcess(0)
 }
 
 private fun ispisiPomoc() {
     println(
         """
         Komande:
-          status   provera L-PFR-a: dostupnost, PIN, šifre stanja, poreske stope
-          pin      slanje PIN-a iz config/local.json (jednom, bez ponavljanja)
-          racun [--oznaka A]     izdaje Training Sale: „Test kafa“ 1 × 300 RSD, gotovina
-          provera <RequestId>    proverava da li je poslednji račun sa tim RequestId izdat
+          status                              stanje L-PFR-a: dostupnost, PIN, šifre stanja, poreske stope
+          pin                                 PIN iz config/local.json (jednom, bez ponavljanja)
+          racun [--vrsta obuka|promet] [--oznaka A]
+                                              „Test kafa“ 1 × 300 RSD, gotovina (podrazumevano Obuka)
+          refundacija <broj> --kupac 20:123   refundacija celog računa, uz ID kupca
+          kopija <broj>                       kopija računa vrste Promet
+          lista                               računi sačuvani u folderu racuni/
+          provera <RequestId>                 da li je poslednji račun sa tim RequestId izdat
         """.trimIndent()
     )
 }

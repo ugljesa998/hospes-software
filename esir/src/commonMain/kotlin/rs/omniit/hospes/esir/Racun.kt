@@ -3,6 +3,9 @@ package rs.omniit.hospes.esir
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
+/** PFR broj računa: `requestedBy-signedBy-redniBroj`, npr. `7EHXTU6T-7EHXTU6T-2`. */
+private val FORMAT_PFR_BROJA = Regex("""[A-Za-z0-9]+-[A-Za-z0-9]+-\d+""")
+
 /** Vrsta računa (TaxCore `invoiceType`). */
 @Serializable
 enum class VrstaRacuna {
@@ -61,10 +64,20 @@ data class ZahtevZaRacun(
         if (items.isEmpty()) add("Račun mora da ima bar jednu stavku")
         if (payment.isEmpty()) add("Račun mora da ima bar jedno plaćanje")
         if (buyerCostCenterId != null && buyerId == null) add("Opciono polje kupca traži i ID kupca")
-        if ((buyerId?.length ?: 0) > 20) add("ID kupca može da ima najviše 20 znakova")
+        buyerId?.let { SifarnikKupca.proveriIdKupca(it)?.let(::add) }
+        buyerCostCenterId?.let { SifarnikKupca.proveriOpcionoPolje(it)?.let(::add) }
         if ((invoiceNumber?.length ?: 0) > 60) add("ESIR broj može da ima najviše 60 znakova")
         if (invoiceType == VrstaRacuna.KOPIJA || transactionType == TipTransakcije.REFUNDACIJA) {
             if (referentDocumentNumber == null) add("Kopija i refundacija traže broj računa na koji se pozivaju")
+        }
+        if (transactionType == TipTransakcije.REFUNDACIJA && buyerId == null) {
+            add("Refundacija traži ID kupca (PURS uputstvo, poglavlje 9.6)")
+        }
+        referentDocumentNumber?.let {
+            if (!FORMAT_PFR_BROJA.matches(it)) add("Broj računa na koji se poziva mora biti u formatu XXXXXXXX-XXXXXXXX-broj")
+        }
+        if (referentDocumentDT != null && referentDocumentNumber == null) {
+            add("Vreme računa na koji se poziva traži i njegov broj")
         }
         items.forEachIndexed { i, s -> s.proveri().forEach { add("Stavka ${i + 1}: $it") } }
     }
